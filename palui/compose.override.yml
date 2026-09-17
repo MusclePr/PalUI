@@ -1,0 +1,6 @@
+services:
+  palui:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-/palui}

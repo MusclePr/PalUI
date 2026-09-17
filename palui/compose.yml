@@ -1,0 +1,22 @@
+services:
+  palui:
+    container_name: palui
+    image: ghcr.io/musclepr/palui:latest
+    build:
+      context: ..
+    env_file:
+      - defaults/PalWorldSettings.env
+      - defaults/server.env
+      - PalWorldSettings.env
+      - server.env
+    environment:
+      - "TZ=Asia/Tokyo"
+      - "PUID=1000"
+      - "PGID=1000"
+      - "DOCKER_GID=${DOCKER_GID:-}"
+      - "NEXTAUTH_URL=http://localhost:8080${NEXT_PUBLIC_BASE_PATH:-/palui}"
+    volumes:
+      - ./server:/server
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8080:3000"

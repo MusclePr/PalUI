@@ -1,0 +1,6 @@
+/palui/server/palworld
+node_modules/
+.next/
+out/
+.env
+node_modules

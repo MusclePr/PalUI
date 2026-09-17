@@ -1,0 +1,26 @@
+---
+services:
+  palworld:
+    image: thijsvanloef/palworld-server-docker:wine
+    container_name: palworld-server
+    stop_grace_period: 30s  # Set to however long you are willing to wait for the container to gracefully stop
+    cap_add:
+      - NET_RAW    # for podman (docker default has it)
+      - NET_ADMIN  # NFLOG requires this
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - 8211:8211/udp
+    volumes:
+      - ./palworld:/palworld/
+    env_file:
+      - ./defaults/game_balance.env
+      - ./defaults/game_features.env
+      - ./defaults/game_performance.env
+      - ./defaults/game_server.env
+      - ./defaults/system.env
+      - ./override.env
+    environment:
+      - TZ=${TZ:-Etc/UTC}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+

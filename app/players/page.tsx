@@ -1,11 +1,12 @@
 "use client";
 
 import {
-  Ban, Bell, Check, Copy, Database, LayoutDashboard, LogOut,
+  Ban, Bell, Check, Copy, Database, LayoutDashboard,
   Menu, MessageSquare, MoreHorizontal, Search, Settings, Shield, TerminalSquare,
   Trash2, UserCheck, UserPlus, Users, X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { SidebarFooter } from "../components/SidebarFooter";
 
 type Player = {
   name: string;
@@ -141,7 +142,7 @@ export default function PlayersPage() {
         <div className="sidebar-header"><div className="brand-mark"><TerminalSquare size={19} /> PALUI</div><button className="icon-button mobile-close" onClick={() => setMobileNav(false)} aria-label="メニューを閉じる"><X size={18} /></button></div>
         <div className="server-selector"><span className="signal-dot" /><div><small>MANAGED SERVER</small><strong>palworld-server</strong></div></div>
         <nav className="main-nav" aria-label="メインナビゲーション"><p className="nav-label">OPERATIONS</p>{navItems.map(({ label, icon: Icon, href, active }) => <a href={href === "#" ? "#" : `${basePath}${href}`} className={active ? "active" : ""} key={label} onClick={href === "#" ? (event) => event.preventDefault() : undefined}><Icon size={17} /> {label}{active && <span className="nav-pip" />}</a>)}</nav>
-        <div className="sidebar-footer"><div className="operator-avatar">OP</div><div><strong>operator</strong><small>運用者</small></div><button className="icon-button" aria-label="ログアウト" onClick={async () => { await fetch(`${basePath}/api/auth/logout`, { method: "POST" }); window.location.href = `${basePath}/login`; }}><LogOut size={16} /></button></div>
+        <SidebarFooter />
       </aside>
       <main className="content-area">
         <header className="topbar"><button className="icon-button menu-trigger" onClick={() => setMobileNav(true)} aria-label="メニューを開く"><Menu size={20} /></button><div className="breadcrumbs"><span>OPERATIONS</span><b>/</b><strong>プレイヤー</strong></div><div className="topbar-meta"><span className="live-indicator"><i /> LIVE</span><span className="topbar-divider" /><span className="muted">17 Sep 2026, 14:32 JST</span></div></header>

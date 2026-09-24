@@ -214,7 +214,7 @@ function parseDotenv(content: string) {
 }
 
 type SettingType = "BOOL" | "INT" | "FLOAT" | "STR" | "PASSWORD" | "ARRAY" | "CHOICE" | "SELECT";
-type SettingMetadata = { label: string; description: string; type: SettingType; heading?: string; min?: number; max?: number; options?: string[] };
+type SettingMetadata = { label: string; description: string; type: SettingType; heading?: string; collapsible?: boolean; section?: number; min?: number; max?: number; options?: string[] };
 
 function parseTypeSpec(spec: string): Pick<SettingMetadata, "type" | "min" | "max" | "options"> {
   const range = spec.match(/^(INT|FLOAT)\((-?[\d.]+),(-?[\d.]+)\)$/);
@@ -228,10 +228,16 @@ function parseTypeSpec(spec: string): Pick<SettingMetadata, "type" | "min" | "ma
 function parseDefaultSettings(content: string) {
   const values: Record<string, { defaultValue: string; metadata: SettingMetadata }> = {};
   let heading = "";
+  let collapsible = false;
+  let section = 0;
   let pending: SettingMetadata | undefined;
   for (const line of content.split("\n")) {
     const headingMatch = line.match(/^#(\*{1,3})(?!\*)\s*(.*)$/);
-    if (headingMatch) { heading = headingMatch[2].trim(); continue; }
+    if (headingMatch) {
+      if (headingMatch[1].length === 1) { heading = headingMatch[2].trim(); collapsible = false; }
+      else if (headingMatch[1].length === 2) { heading = headingMatch[2].trim(); collapsible = true; section += 1; }
+      continue;
+    }
     const metadataMatch = line.match(/^#\|([^|]*)\|([^|]*)\|(.*)$/);
     if (metadataMatch) {
       pending = { label: metadataMatch[1].trim(), description: metadataMatch[3].trim(), ...parseTypeSpec(metadataMatch[2].trim()) };
@@ -241,7 +247,7 @@ function parseDefaultSettings(content: string) {
     if (valueMatch) {
       const key = valueMatch[1];
       const metadata = pending ?? { label: key, description: "", type: "STR" as SettingType };
-      values[key] = { defaultValue: valueMatch[2].replace(/^"|"$/g, ""), metadata: heading ? { ...metadata, heading } : metadata };
+      values[key] = { defaultValue: valueMatch[2].replace(/^"|"$/g, ""), metadata: heading ? { ...metadata, heading, collapsible, section: collapsible ? section : undefined } : metadata };
       pending = undefined;
     }
   }

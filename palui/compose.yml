@@ -4,11 +4,6 @@ services:
     image: ghcr.io/musclepr/palui:latest
     build:
       context: ..
-    env_file:
-      - defaults/PalWorldSettings.env
-      - defaults/server.env
-      - PalWorldSettings.env
-      - server.env
     environment:
       - "TZ=Asia/Tokyo"
       - "PUID=1000"

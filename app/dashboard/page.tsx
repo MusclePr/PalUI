@@ -2,10 +2,11 @@
 
 import {
   Activity, AlertTriangle, Ban, Check, ChevronDown, CircleStop, Cpu, Database,
-  FileText, Gauge, HardDrive, LayoutDashboard, LogOut, Menu, Moon, Play,
+  FileText, Gauge, HardDrive, LayoutDashboard, Menu, Moon, Play,
   RefreshCw, Save, Server, Settings, Users, X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { SidebarFooter } from "../components/SidebarFooter";
 
 type ServerState = "running" | "sleeping" | "stopped" | "starting";
 
@@ -104,7 +105,7 @@ export default function DashboardPage() {
           <p className="nav-label">OPERATIONS</p>
           {navItems.map(({ label, icon: Icon, href, active }) => <a href={href ? `${basePath}${href}` : "#"} className={active ? "active" : ""} key={label} onClick={href ? undefined : (event) => event.preventDefault()}><Icon size={17} /> {label}{active && <span className="nav-pip" />}</a>)}
         </nav>
-        <div className="sidebar-footer"><div className="operator-avatar">OP</div><div><strong>operator</strong><small>運用者</small></div><button className="icon-button" aria-label="ログアウト" onClick={async () => { await fetch(`${basePath}/api/auth/logout`, { method: "POST" }); window.location.href = `${basePath}/login`; }}><LogOut size={16} /></button></div>
+        <SidebarFooter />
       </aside>
       <main className="content-area">
         <header className="topbar"><button className="icon-button menu-trigger" onClick={() => setMobileNav(true)} aria-label="メニューを開く"><Menu size={20} /></button><div className="breadcrumbs"><span>OPERATIONS</span><b>/</b><strong>ダッシュボード</strong></div><div className="topbar-meta"><span className="live-indicator"><i /> LIVE</span><span className="topbar-divider" /><span className="muted">17 Sep 2026, 14:32 JST</span></div></header>

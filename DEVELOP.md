@@ -85,6 +85,7 @@ host
     |  `- system.env
     |- palworld/ ... Palworld 専用サーバーのデータディレクトリ
     |- .env ... ホスト向け環境変数（palui の管理対象）
+    |- players.json ... 登録済みプレイヤー（ID、名前、ホワイトリスト状態、BAN状態、初回登録日時、最終ログイン日時などを保存しておくためのファイル）
     |- compose.yml ... Palworld 専用サーバーのComposeファイル（palui の管理対象）
     `- override.env ... コンテナ向け環境変数（palui の管理対象）
 ```
@@ -93,8 +94,8 @@ host
 flowchart LR
   Browser[管理者・運用者のブラウザ] --> Proxy[リバースプロキシ]
   Proxy --> UI[palui: Next.js]
-  UI --> Socket[/var/run/docker.sock]
-  UI --> ServerDir[/server: bind mount]
+  UI --> Socket["/var/run/docker.sock"]
+  UI --> ServerDir["/server: bind mount"]
   Socket --> Docker[Docker daemon]
   Docker --> Palworld[palworld-server container]
   ServerDir --> Compose[compose.yml and dotenv files]
@@ -114,9 +115,9 @@ services:
 
 | 操作種別 | 実行経路 | 用途 |
 | --- | --- | --- |
-| プロジェクト操作 | `docker compose --project-directory /server <up|down|ps|config|...>` | `up`、`down`、`ps`、`config` など Compose が責務を持つ操作。 |
+| プロジェクト操作 | `docker compose --project-directory /server up` | `up`、`down`、`ps`、`config` など Compose が責務を持つ操作。 |
 | コンテナ操作 | Docker Socket API を Dockerode 等で呼び出す | 状態照会、開始、停止、再起動、ログ、統計、コンテナ内コマンド実行。 |
-| ゲーム内操作 | Docker Socket API の exec で `rest-cli` を実行 | REST APIによる情報取得、告知、保存、プレイヤー管理、終了。 |
+| ゲーム内操作 | Docker Socket API の exec で `rest-cli` や `rcon-cli` を実行 | REST APIによる情報取得、告知、保存、プレイヤー管理、終了。ホワイトリスト機能だけ RCON のみ対応した MOD に依存する。 |
 | 設定操作 | `/server` のファイル API | 対象Composeとdotenvの読取、検証、原子的保存。 |
 
 Compose コマンドを組み立てる際、利用者入力をシェル文字列として連結してはならない。固定したサブコマンドと引数配列を使い、許可した操作だけを実行する。
@@ -172,9 +173,9 @@ palui は以下の REST API 操作を提供する。返却 JSON は構造化し�
 
 | RCONコマンド | UI機能 | 権限 |
 | --- | --- | --- |
-| `whitelist_list` | ホワイトリストメンバーの一覧 | 管理者、運用者 |
-| `whitelist_add <player ID>` | ホワイトリストメンバーの追加 | 管理者、運用者 |
-| `whitelist_remove <player ID>` | ホワイトリストメンバーの削除 | 管理者、運用者 |
+| `whitelist_get` | ホワイトリストメンバーの一覧出力例：<br><code>7 whitelisted players:<br>steam_76561198847285114<br>steam_76561198156963008<br>steam_76561198215170315<br>steam_76561199558450770<br>ps5_6617244186950123007<br>steam_76561199222581273<br>steam_76561198077836426<br></code>| 管理者、運用者 |
+| `whitelist_add <player ID>` | ホワイトリストメンバーの追加例：<br><code>Added 'ps5_2383497052811828308' to whitelist.</code> | 管理者、運用者 |
+| `whitelist_remove <player ID>` | ホワイトリストメンバーの削除例：<br><code>Removed 'ps5_2383497052811828308' from whitelist.</code> | 管理者、運用者 |
 
 プレイヤーIDだけでは利用者を識別しにくいため、`players` の応答を表示名との対応付けに利用する。対応する表示名が取得できない場合は、プレイヤーIDをそのまま表示する。
 
@@ -184,7 +185,60 @@ palui は以下の REST API 操作を提供する。返却 JSON は構造化し�
 - プレイヤー ID はクリップボードにコピー可能にする。
 - キック、BAN、BAN 解除は対象プレイヤーと理由を確認するダイアログを経由する。
 - 操作成功時は API 応答を表示し、一覧を再取得する。失敗時は操作対象、時刻、失敗理由を表示する。
-- ホワイトリストは、RCONコマンドまたは `/server/palworld/Pal/Binaries/Win64/PalDefender/WhiteList.json` から取得する。ファイルは読み取り専用の状態表示に利用し、変更はRCON経由で行う。
+- ホワイトリストの状況は、REST APIで得られないため、RCONコマンドで取得する。変更はRCON経由で行う。
+- 
+- プレイヤーIDは、以下のフォーマットです。
+  - Steamユーザー：`steam_`で始まる数値で表現される（例）`steam_76561198847285114`
+  - PS5ユーザー：`ps5_`で始まる数値で表現される（例）`PS5_6617244186950123007`
+  - 他のプラットフォームのユーザー：同様にプラットフォームを示す文字列+`_`+識別文字列となる見込み
+- ログから未登録プレイヤーの一覧を作成し、どのプレイヤーを登録するかどうか選べる機能を提供します。
+
+#### 未登録プレイヤー抽出方法
+
+1. 接続を試みたが、ホワイトリストから蹴られた人の一覧。この中には、既にホワイトリストに登録済みのIDも含まれます。
+
+  ```
+  $ docker logs -t palworld-server | grep -E 'is not whitelisted'
+  2026-09-16T07:05:38.729243365Z [08:05:28][info] ps5_2383497052811828308 | 133.18.230.198 is not whitelisted, refusing join request...
+  2026-09-21T12:38:59.935112739Z [13:38:49][info] steam_76561198156963008 | 133.18.230.198 is not whitelisted, refusing join request...
+  2026-09-21T12:43:45.772071958Z [13:43:35][info] steam_76561198156963008 | 133.167.33.171 is not whitelisted, refusing join request...
+  2026-09-21T12:53:51.519094585Z [13:53:41][info] steam_76561198156963008 | 49.212.175.90 is not whitelisted, refusing join request...
+  2026-09-21T12:54:16.811124991Z [13:54:06][info] steam_76561198156963008 | 133.167.33.171 is not whitelisted, refusing join request...
+  2026-09-21T12:56:06.531272355Z [13:56:01][info] steam_76561198156963008 | 49.212.175.90 is not whitelisted, refusing join request...
+  2026-09-21T12:56:28.992228583Z [13:56:18][info] steam_76561198215170315 | 133.18.230.198 is not whitelisted, refusing join request...
+  2026-09-21T12:58:18.848158043Z [13:58:08][info] steam_76561198215170315 | 133.18.230.198 is not whitelisted, refusing join request...
+  2026-09-21T13:15:39.495287716Z [14:15:29][info] steam_76561199558450770 | 133.18.230.198 is not whitelisted, refusing join request...
+  2026-09-21T13:17:06.528202545Z [14:16:56][info] ps5_6617244186950123007 | 133.167.33.171 is not whitelisted, refusing join request...
+  2026-09-21T15:48:24.267170813Z [16:48:14][info] steam_76561199222581273 | 49.212.175.90 is not whitelisted, refusing join request...
+  2026-09-21T18:52:05.625200688Z [19:51:55][info] steam_76561198077836426 | 133.167.33.171 is not whitelisted, refusing join request...
+  ```
+
+2. 更に置換し、時間、ID、IPアドレスを抽出します。`sed -E 's/^([^ ]+).*\[info\] (\w+) \| ([0-9\.]+).*/\1 \2 \3/'`
+
+  ```
+  2026-09-16T07:05:38.729243365Z ps5_2383497052811828308 133.18.230.198
+  2026-09-21T12:38:59.935112739Z steam_76561198156963008 133.18.230.198
+  2026-09-21T12:43:45.772071958Z steam_76561198156963008 133.167.33.171
+  2026-09-21T12:53:51.519094585Z steam_76561198156963008 49.212.175.90
+  2026-09-21T12:54:16.811124991Z steam_76561198156963008 133.167.33.171
+  2026-09-21T12:56:06.531272355Z steam_76561198156963008 49.212.175.90
+  2026-09-21T12:56:28.992228583Z steam_76561198215170315 133.18.230.198
+  2026-09-21T12:58:18.848158043Z steam_76561198215170315 133.18.230.198
+  2026-09-21T13:15:39.495287716Z steam_76561199558450770 133.18.230.198
+  2026-09-21T13:17:06.528202545Z ps5_6617244186950123007 133.167.33.171
+  2026-09-21T15:48:24.267170813Z steam_76561199222581273 49.212.175.90
+  2026-09-21T18:52:05.625200688Z steam_76561198077836426 133.167.33.171
+  ```
+
+3. players.json に既に登録済みのIDのものは削除します。
+
+  ```
+  2026-09-16T07:05:38.729243365Z ps5_2383497052811828308 133.18.230.198
+  2026-09-21T15:48:24.267170813Z steam_76561199222581273 49.212.175.90
+  2026-09-21T18:52:05.625200688Z steam_76561198077836426 133.167.33.171
+  ```
+
+4. 時間の情報は、UTCのため、UI上では、TimeZoneに合わせた時間表示に変更してあげてください。"+%Y/%m/%d %H:%M:%S"
 
 ### 5.5 ログと診断
 

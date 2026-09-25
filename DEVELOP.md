@@ -85,7 +85,8 @@ host
     |  `- system.env
     |- palworld/ ... Palworld 専用サーバーのデータディレクトリ
     |- .env ... ホスト向け環境変数（palui の管理対象）
-    |- players.json ... 登録済みプレイヤー（ID、名前、ホワイトリスト状態、BAN状態、初回登録日時、最終ログイン日時などを保存しておくためのファイル）
+    |- .passwd ... palui の管理者・運用者パスワードハッシュ（0600、Git管理対象外）
+    |- players.json ... 登録済みプレイヤー（ID、名前、ロール、ホワイトリスト状態、BAN状態、初回ログイン日時、最終ログイン日時などを保存しておくためのファイル）
     |- compose.yml ... Palworld 専用サーバーのComposeファイル（palui の管理対象）
     `- override.env ... コンテナ向け環境変数（palui の管理対象）
 ```
@@ -167,9 +168,10 @@ palui は以下の REST API 操作を提供する。返却 JSON は構造化し�
 
 対象イメージが提供する `rest-cli` のバージョン差分に備え、API呼出層はUIから分離する。未対応のコマンドはボタンを無効化し、検出した理由を表示する。
 
-導入済みのMODが提供するRCON機能により、ホワイトリストを管理できる。MODが未導入またはコマンドが未対応の場合は、機能を無効化し理由を表示する。
+MOD_USE_PALDEFENDER=true の設定により、PalDefender MOD がインストールされ、ホワイトリスト機能を提供します。
+PalDefender MODが未導入または RCON コマンドが未対応の場合、さらに、/palworld/Pal/Binaries/Win64/PalDefender/Config.json の `{ "useWhitelist": true }` になっていなければ、機能を無効化し理由を表示する。
 
-`docker exec -itu steam palworld-server rcon-cli <RCONコマンド>`
+`docker exec -itu steam palworld-server rcon-cli "<RCONコマンド>"`
 
 | RCONコマンド | UI機能 | 権限 |
 | --- | --- | --- |
@@ -185,7 +187,7 @@ palui は以下の REST API 操作を提供する。返却 JSON は構造化し�
 - プレイヤー ID はクリップボードにコピー可能にする。
 - キック、BAN、BAN 解除は対象プレイヤーと理由を確認するダイアログを経由する。
 - 操作成功時は API 応答を表示し、一覧を再取得する。失敗時は操作対象、時刻、失敗理由を表示する。
-- ホワイトリストの状況は、REST APIで得られないため、RCONコマンドで取得する。変更はRCON経由で行う。
+- ホワイトリストの状況は、REST APIで得られないため、/palworld/Pal/Binaries/Win64/PalDefender/WhiteList.json から取得し、変更は RCON コマンドで行う。
 - 
 - プレイヤーIDは、以下のフォーマットです。
   - Steamユーザー：`steam_`で始まる数値で表現される（例）`steam_76561198847285114`
@@ -299,8 +301,9 @@ Compose環境変数の変更は、原則として対象コンテナの再作成�
 
 ### 7.1 認証
 
-- palui はログイン必須とし、管理者用と運用者用の別資格情報を環境変数またはシークレットで受け取る。
-- 平文パスワードは保存しない。パスワードハッシュを使用し、比較にはタイミング攻撃に耐性のある手法を使う。
+- palui はログイン必須とし、管理者用と運用者用の別資格情報を使用する。
+- 平文パスワードは保存しない。パスワードハッシュは `/server/.passwd` に保存し、ファイル権限を `0600` とする。比較にはタイミング攻撃に耐性のある手法を使う。
+- `.passwd` は対象コンテナの `env_file` に含めず、Git の管理対象から除外する。
 - セッション Cookie は `HttpOnly`、`Secure`、`SameSite` を設定する。TLS 終端がリバースプロキシの場合も、転送ヘッダーを信頼する送信元を固定する。
 - Cookie を使う変更 API は CSRF 対策を必須とする。
 

@@ -2,15 +2,16 @@ import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypt
 import { access, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-const envFile = "/server/.env";
+const serverDir = "/server";
+const credentialsFile = ".passwd";
 const cookieName = "palui_session";
 const sessionMaxAge = 60 * 60 * 8;
 
 export type AuthRole = "admin" | "operator";
 
-async function getEnvPath() {
-  const configuredPath = process.env.PALUI_SERVER_DIR ? `${process.env.PALUI_SERVER_DIR}/.env` : envFile;
-  try { await access(configuredPath); return configuredPath; } catch { return join(process.cwd(), "palui", "server", ".env"); }
+async function getCredentialsPath() {
+  if (process.env.PALUI_SERVER_DIR) return join(process.env.PALUI_SERVER_DIR, credentialsFile);
+  try { await access(serverDir); return join(serverDir, credentialsFile); } catch { return join(process.cwd(), "palui", "server", credentialsFile); }
 }
 
 function readEnv(content: string) {
@@ -58,12 +59,12 @@ export function readSession(cookie: string | undefined): AuthRole | null {
 }
 
 export async function getAuthState() {
-  const values = readEnv(await readFile(await getEnvPath(), "utf8").catch(() => ""));
+  const values = readEnv(await readFile(await getCredentialsPath(), "utf8").catch(() => ""));
   return { configured: Boolean(values.ADMIN_PASSWORD_HASH && values.OP_PASSWORD_HASH), values };
 }
 
 async function writeCredentials(adminPassword: string, operatorPassword: string) {
-  const path = await getEnvPath();
+  const path = await getCredentialsPath();
   const content = await readFile(path, "utf8").catch(() => "");
   const replacements: Record<string, string> = { ADMIN_PASSWORD_HASH: hashPassword(adminPassword), OP_PASSWORD_HASH: hashPassword(operatorPassword) };
   const lines = content.split("\n");

@@ -291,7 +291,7 @@ export async function saveSettings(values: Record<string, string>, expectedHash:
   if (settingsHash(current) !== expectedHash) throw new Error("設定ファイルが外部変更されています");
   const metadata = (await Promise.all(Object.values(settingsFiles).map(async (relativePath) => parseDefaultSettings(await readFile(`${settingsRoot}/${relativePath}`, "utf8").catch(() => ""))))).reduce((all, category) => ({ ...all, ...category }), {} as Record<string, { defaultValue: string; metadata: SettingMetadata }>);
   for (const [key, value] of Object.entries(values)) if (metadata[key]) validateSetting(value, metadata[key].metadata);
-  const content = `# palui によって上書きされる設定ファイル\n${Object.entries(values).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join("\n")}\n`;
+  const content = `# palui によって上書きされる設定ファイル\n${Object.entries(values).filter(([key, value]) => metadata[key] && value !== metadata[key].defaultValue).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join("\n")}\n`;
   const temporaryFile = `${settingsRoot}/override.env.tmp-${process.pid}`;
   await writeFile(temporaryFile, content, "utf8");
   await rename(temporaryFile, `${settingsRoot}/override.env`);

@@ -19,8 +19,4 @@ services:
       - ./defaults/game_server.env
       - ./defaults/system.env
       - ./override.env
-    environment:
-      - TZ=${TZ:-Etc/UTC}
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
 

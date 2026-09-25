@@ -5,9 +5,9 @@ services:
     build:
       context: ..
     environment:
-      - "TZ=Asia/Tokyo"
-      - "PUID=1000"
-      - "PGID=1000"
+      - "TZ=${TZ:-Etc/UTC}"
+      - "PUID=${PUID:-1000}"
+      - "PGID=${PGID:-1000}"
       - "DOCKER_GID=${DOCKER_GID:-}"
       - "NEXTAUTH_URL=http://localhost:8080${NEXT_PUBLIC_BASE_PATH:-/palui}"
     volumes:

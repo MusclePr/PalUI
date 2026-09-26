@@ -1,12 +1,8 @@
+name: ${PROJECT:-dev}
 services:
   palui:
-    container_name: palui
+    container_name: ${COMPOSE_PROJECT_NAME}-palui
     image: ghcr.io/musclepr/palui:latest
-    build:
-      context: ..
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-/palui}
     environment:
       - "TZ=${TZ:-Etc/UTC}"
       - "PUID=${PUID:-1000}"
@@ -14,6 +10,7 @@ services:
       - "DOCKER_GID=${DOCKER_GID:-}"
       - "NEXT_PUBLIC_BASE_PATH=${NEXT_PUBLIC_BASE_PATH:-/palui}"
       - "NEXTAUTH_URL=http://localhost:8080${NEXT_PUBLIC_BASE_PATH:-/palui}"
+      - "COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}"
     volumes:
       - ./server:/server
       - /var/run/docker.sock:/var/run/docker.sock

@@ -2,7 +2,7 @@
 services:
   palworld:
     image: thijsvanloef/palworld-server-docker:wine
-    container_name: palworld-server
+    container_name: ${COMPOSE_PROJECT_NAME}-palworld
     stop_grace_period: 30s  # Set to however long you are willing to wait for the container to gracefully stop
     cap_add:
       - NET_RAW    # for podman (docker default has it)
@@ -19,4 +19,7 @@ services:
       - ./defaults/game_server.env
       - ./defaults/system.env
       - ./override.env
-
+    environment:
+      - TZ=${TZ:-Etc/UTC}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}

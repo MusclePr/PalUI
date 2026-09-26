@@ -15,12 +15,12 @@ if [ -z "$STEAM_USERNAME" ]; then
   exit 1
 fi
 
-process="$(docker ps -f 'name=palworld-server' --format 'json')"
+process="$(docker compose ps --format json palworld)"
 status="$(echo "$process" | jq -r '.State')"
 if [ "${status}" = "running" ]; then
-  docker exec -itu steam palworld-server steam-login "$@"
+  docker compose exec -itu steam palworld steam-login "$@"
 else
   docker compose run --rm -it palworld steam-login "$@"
-  network_name="$(docker compose config | sed -n '/networks:/,$ s/^[[:space:]]*name:[[:space:]]*//p')"
+  network_name="$(docker compose config --format json | jq -r '.networks.default.name')"
   [ -n "${network_name}" ] && docker network rm "${network_name}" || true
 fi

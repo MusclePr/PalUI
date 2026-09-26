@@ -60,6 +60,22 @@ export type RegisteredPlayer = {
   firstLogin: string | null;
 };
 
+export type DetectedPlayer = {
+  id: string;
+  displayName: string;
+  lastLogin: string | null;
+};
+
+export type DetectedRegistrationResult = {
+  playerId: string;
+  ok: boolean;
+  reason?: string;
+};
+
+// whitelist.sh の IsVaridID / IsValidName と同じ規則
+export const detectedIdPattern = /^[a-z0-9]+_[0-9]+$/;
+export const forbiddenNameChars = /["'\\`$&|;<>]/;
+
 export type AddRegisteredPlayerInput = {
   playerId: string;
   displayName: string;
@@ -212,6 +228,73 @@ export async function updateWhitelist(playerId: string, enabled: boolean) {
     try { await writeWhitelist(next); } catch { return { playerId, enabled, whitelist: next }; }
   }
   return { playerId, enabled, whitelist: await readWhitelist() };
+}
+
+async function execWhitelistScript(args: string[]) {
+  return execFileAsync("bash", ["./whitelist.sh", ...args], {
+    cwd: settingsRoot,
+    env: { ...process.env, MODE: "json" },
+    timeout: 60_000,
+    maxBuffer: 256 * 1024,
+  });
+}
+
+export async function detectUnregisteredPlayers(): Promise<DetectedPlayer[]> {
+  let stdout: string;
+  try {
+    stdout = (await execWhitelistScript([])).stdout.trim();
+  } catch {
+    throw new PlayerStoreError("whitelist.sh を実行できませんでした", 503);
+  }
+  if (!stdout) return [];
+  let value: unknown;
+  try {
+    value = JSON.parse(stdout);
+  } catch {
+    throw new PlayerStoreError("未登録プレイヤー情報を解析できませんでした", 502);
+  }
+  if (!Array.isArray(value)) throw new PlayerStoreError("未登録プレイヤー情報を解析できませんでした", 502);
+  return value.flatMap((entry) => {
+    const item = entry as Record<string, unknown>;
+    const id = String(item.id ?? "").trim();
+    if (!/^[-_a-zA-Z0-9:.]+$/.test(id) || item.white === true) return [];
+    return [{
+      id,
+      displayName: String(item.displayName ?? "").trim(),
+      lastLogin: typeof item.lastLogin === "string" && item.lastLogin ? item.lastLogin : null,
+    }];
+  });
+}
+
+function sanitizeDetectedName(name: string, playerId: string) {
+  // eslint-disable-next-line no-control-regex
+  const cleaned = name.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 64);
+  return cleaned || playerId;
+}
+
+export async function registerDetectedPlayers(entries: { playerId: string; displayName: string }[]) {
+  const results: DetectedRegistrationResult[] = [];
+  // players.json への書き込み競合を避けるため逐次実行する
+  for (const entry of entries) {
+    const playerId = entry.playerId.trim();
+    const displayName = sanitizeDetectedName(entry.displayName, playerId);
+    if (!detectedIdPattern.test(playerId)) {
+      results.push({ playerId, ok: false, reason: "invalid ID" });
+      continue;
+    }
+    if (forbiddenNameChars.test(displayName)) {
+      results.push({ playerId, ok: false, reason: "invalid name" });
+      continue;
+    }
+    try {
+      await execWhitelistScript(["add", playerId, displayName]);
+      results.push({ playerId, ok: true });
+    } catch (error) {
+      const stderr = (error as { stderr?: unknown }).stderr;
+      results.push({ playerId, ok: false, reason: typeof stderr === "string" && stderr.trim() ? stderr.trim().split("\n").pop() : "whitelist.sh add failed" });
+    }
+  }
+  return { ...(await readPlayers()), results };
 }
 
 export async function addRegisteredPlayer(input: AddRegisteredPlayerInput) {

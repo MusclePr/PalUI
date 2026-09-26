@@ -49,6 +49,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   curl \
   gnupg \
   gosu \
+  jq \
   tzdata \
   && install -m 0755 -d /etc/apt/keyrings \
   && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \

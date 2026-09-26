@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authCookie, readSession } from "../../../lib/server/auth";
-import { addRegisteredPlayer, deleteRegisteredPlayer, PlayerStoreError, readPlayers, updateWhitelist } from "../../../lib/server/palworld";
+import { addRegisteredPlayer, deleteRegisteredPlayer, detectUnregisteredPlayers, PlayerStoreError, readPlayers, registerDetectedPlayers, updateWhitelist } from "../../../lib/server/palworld";
 
 export const runtime = "nodejs";
 
@@ -22,7 +22,17 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   if (!readRole(request)) return unauthorized();
   try {
-    const body = await request.json() as { action?: unknown; playerId?: unknown; displayName?: unknown; enabled?: unknown; role?: unknown };
+    const body = await request.json() as { action?: unknown; playerId?: unknown; displayName?: unknown; enabled?: unknown; role?: unknown; players?: unknown };
+    if (body.action === "detect") {
+      return NextResponse.json({ detected: await detectUnregisteredPlayers() });
+    }
+    if (body.action === "register-detected" && Array.isArray(body.players) && body.players.length > 0 && body.players.length <= 50) {
+      const entries = body.players.map((item) => item as { playerId?: unknown; displayName?: unknown });
+      if (!entries.every((item) => typeof item.playerId === "string" && typeof item.displayName === "string")) {
+        return NextResponse.json({ error: "不正なプレイヤー操作です" }, { status: 400 });
+      }
+      return NextResponse.json(await registerDetectedPlayers(entries.map((item) => ({ playerId: item.playerId as string, displayName: item.displayName as string }))));
+    }
     if ((body.action === "whitelist" || body.action === undefined) && typeof body.playerId === "string" && typeof body.enabled === "boolean") {
       await updateWhitelist(body.playerId, body.enabled);
       return NextResponse.json(await readPlayers());

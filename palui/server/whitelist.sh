@@ -81,7 +81,7 @@ function PlayersJSON_SyncWhitelist() {
     map(
       .id as $id |
       if ($wl | index($id)) != null
-      then .
+      then .white = true
       else .white = false
       end
     )
@@ -207,12 +207,46 @@ function FetchNotWhitelist() {
   done <<< "${ids}"
 }
 
+function RCON() {
+  docker compose exec -u steam pal autopause resume
+  docker compose exec -u steam pal rcon-cli -T 1s "$@"
+}
+
+# 有効なIDかどうかを判定する関数
+# 引数: プレイヤーID
+# 戻り値: 有効なIDなら0、無効なIDなら1
+function IsVaridID() {
+  local id="$1"
+  if [ -z "${id}" ]; then
+    return 1
+  fi
+  if [[ "${id}" =~ ^[a-z0-9]+_[0-9]+$ ]]; then
+    return 0
+  fi
+  return 1
+}
+
+# 有効な名前かどうかを判定する関数
+# 引数: プレイヤー名
+# 戻り値: 有効な名前なら0、無効な名前なら1
+function IsValidName() {
+  local name="$1"
+  if [ -z "${name}" ]; then
+    return 1
+  fi
+  # ダブルクォートや特殊文字を含まないかをチェックする
+  if [[ "${name}" =~ [\"\'\\\`\$\&\|\;\<\>] ]]; then
+    return 1
+  fi
+  return 0
+}
+
 WHITELIST=()
 LoadWhitelist WHITELIST
 
 PlayersJSON=""
 PlayersJSON_Load
-OldPlayerJSON="${PlayersJSON}"
+OldPlayersJSON="${PlayersJSON}"
 PlayersJSON_SyncWhitelist
 if [ "${OldPlayersJSON}" != "${PlayersJSON}" ]; then
   PlayersJSON_Save
@@ -227,16 +261,21 @@ elif [ "$1" = "remove" ]; then
     echo "Usage: $(basename $0) remove <player_id>" >&2
     exit 1
   fi
-  ./rcon.sh "whitelist_remove ${id}" 2>&1 >/dev/null && PlayersJSON_SetWhite "${id}" false && PlayersJSON_Save && exit 0
+  RCON "whitelist_remove ${id}" 2>&1 >/dev/null && PlayersJSON_SetWhite "${id}" false && PlayersJSON_Save && exit 0
   exit 1
 elif [ "$1" = "add" ]; then
   id="$2"
   name="$3"
-  if [ -z "${id}" ] || [ -z "${name}" ]; then
-    echo "Usage: $(basename $0) add <player_id> <name>" >&2
+  if [ -z "${id}" ]; then
+    echo "Usage: $(basename $0) add <player_id> [name]" >&2
     exit 1
   fi
-  ./rcon.sh "whitelist_add ${id}" 2>&1 >/dev/null && PlayersJSON_Add "${id}" "${name}" && PlayersJSON_Save && exit 0
+  if [ -z "${name}" ]; then
+    name="${id}"
+  fi
+  IsVaridID "${id}" || { echo "invalid ID" >&2; exit 1; }
+  IsValidName "${name}" || { echo "invalid name" >&2; exit 1; }
+  RCON "whitelist_add ${id}" 2>&1 >/dev/null && PlayersJSON_Add "${id}" "${name}" && PlayersJSON_Save && exit 0
   exit 1
 fi
 
@@ -257,8 +296,10 @@ if [ "${#NOT_WHITELIST[@]}" -gt 0 ]; then
       read -p "名前：" -r name
     fi
     if [ -n "${id}" ]; then
-      echo "./rcon.sh \"whitelist_add ${id}\""
-      ./rcon.sh "whitelist_add ${id}" 2>/dev/null && PlayersJSON_Add "${id}" "${name}" && PlayersJSON_Save && exit 0
+      echo "RCON \"whitelist_add ${id}\""
+      IsVaridID "${id}" || { echo "invalid ID" >&2; exit 1; }
+      IsValidName "${name}" || { echo "invalid name" >&2; exit 1; }
+      RCON "whitelist_add ${id}" 2>/dev/null && PlayersJSON_Add "${id}" "${name}" && PlayersJSON_Save && exit 0
       exit 1
     else
       echo "out of bounds" >&2

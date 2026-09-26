@@ -75,7 +75,8 @@ RUN curl -fsSLO "$SUPERCRONIC_URL" \
 RUN groupmod -n palui node \
   && usermod -l palui -d /home/palui -m -s /usr/sbin/nologin node
 
-COPY --from=builder /app ./
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
   && mkdir -p /server \
@@ -85,4 +86,4 @@ EXPOSE 3000
 STOPSIGNAL SIGTERM
 
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["npm", "run", "start"]
+CMD ["node", "server.js"]

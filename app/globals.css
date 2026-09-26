@@ -126,3 +126,5 @@ a { color: inherit; text-decoration: none; }
 @media (max-width: 700px) { .setting-input.setting-type-select { flex-basis: auto; min-width: 0; width: 100%; } }
 .settings-tab-indicator { background: var(--orange); border-radius: 50%; box-shadow: 0 0 0 3px rgba(233,170,96,.12); display: inline-block; height: 7px; margin-left: auto; width: 7px; }
 .setting-switch input:focus-visible { outline: 0; }.setting-switch:focus-within span { box-shadow: 0 0 0 3px rgba(93,211,191,.22); }.setting-switch input:focus-visible + span { box-shadow: 0 0 0 3px rgba(93,211,191,.22); }
+.player-menu > .dropdown-menu { display: none; }
+.dropdown-menu-portal { max-height: calc(100vh - 16px); max-width: calc(100vw - 16px); overflow-y: auto; position: fixed; width: max-content; z-index: 3; }

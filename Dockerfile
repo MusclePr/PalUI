@@ -1,5 +1,7 @@
 FROM node:22-slim AS base
 
+ENV NEXT_TELEMETRY_DISABLED=1
+
 # Install dependencies only when needed
 FROM base AS deps
 WORKDIR /app
@@ -27,16 +29,19 @@ FROM base AS runner
 ARG PUID=1000
 ARG PGID=1000
 ARG DOCKER_GID=999
+ARG NEXT_PUBLIC_BASE_PATH=/palui
 
 # Default runtime UID/GID support
 ENV PUID=$PUID \
   PGID=$PGID \
-  DOCKER_GID=$DOCKER_GID
+  DOCKER_GID=$DOCKER_GID \
+  NEXT_PUBLIC_BASE_PATH=$NEXT_PUBLIC_BASE_PATH
 
 WORKDIR /app
 
-ENV NODE_ENV=production
-# ENV NEXT_TELEMETRY_DISABLED 1
+ENV NODE_ENV=production \
+  HOSTNAME=0.0.0.0 \
+  PORT=3000
 
 # Needed for running `docker compose` against the host daemon via /var/run/docker.sock
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -67,4 +72,17 @@ RUN curl -fsSLO "$SUPERCRONIC_URL" \
  && mv "$SUPERCRONIC" "/usr/local/bin/${SUPERCRONIC}" \
  && ln -s "/usr/local/bin/${SUPERCRONIC}" /usr/local/bin/supercronic
 
-# TODO: Not yet implemented
+RUN groupmod -n palui node \
+  && usermod -l palui -d /home/palui -m -s /usr/sbin/nologin node
+
+COPY --from=builder /app ./
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+  && mkdir -p /server \
+  && chown -R palui:palui /app
+
+EXPOSE 3000
+STOPSIGNAL SIGTERM
+
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["npm", "run", "start"]

@@ -187,8 +187,8 @@ PalDefender MODが未導入または RCON コマンドが未対応の場合、�
 - プレイヤー ID はクリップボードにコピー可能にする。
 - キック、BAN、BAN 解除は対象プレイヤーと理由を確認するダイアログを経由する。
 - 操作成功時は API 応答を表示し、一覧を再取得する。失敗時は操作対象、時刻、失敗理由を表示する。
-- ホワイトリストの状況は、REST APIで得られないため、/palworld/Pal/Binaries/Win64/PalDefender/WhiteList.json から取得し、変更は RCON コマンドで行う。
-- 
+- ホワイトリストの状況は、REST APIで得られないため、/server/palworld/Pal/Binaries/Win64/PalDefender/WhiteList.json から取得し、変更は RCON コマンドで行う。
+- players.json にキャッシュされたデータが保存されます。/server/palworld/.paused ファイルがある場合は、サーバーがスリープ状態にあるため、不用意に起こさない様に、REST API の info, metrics, players 等による定期的なポーリングはスキップする必要があります。 
 - プレイヤーIDは、以下のフォーマットです。
   - Steamユーザー：`steam_`で始まる数値で表現される（例）`steam_76561198847285114`
   - PS5ユーザー：`ps5_`で始まる数値で表現される（例）`PS5_6617244186950123007`

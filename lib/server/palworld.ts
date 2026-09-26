@@ -10,6 +10,7 @@ const pausedFile = "/server/palworld/.paused";
 const whitelistFile = "/server/palworld/Pal/Binaries/Win64/PalDefender/WhiteList.json";
 const backupDirectory = "/server/palworld/backups";
 const settingsRoot = process.env.PALUI_SERVER_DIR ?? (existsSync("/server") ? "/server" : `${process.cwd()}/palui/server`);
+const registeredPlayersFile = `${settingsRoot}/players.json`;
 const settingsFiles = {
   system: "defaults/system.env",
   server: "defaults/game_server.env",
@@ -48,13 +49,32 @@ export type PalworldPlayer = {
   banned: boolean;
 };
 
+export type RegisteredPlayer = {
+  id: string;
+  displayName: string;
+  role: string;
+  white: boolean;
+  banned: boolean;
+  level: number;
+  lastLogin: string | null;
+  firstLogin: string | null;
+};
+
+export type AddRegisteredPlayerInput = {
+  playerId: string;
+  displayName: string;
+  enabled: boolean;
+  role?: string;
+};
+
+export class PlayerStoreError extends Error {
+  constructor(message: string, public status: number) {
+    super(message);
+  }
+}
+
 type CachedPlayers = { players: PalworldPlayer[]; updatedAt: string };
 let onlinePlayersCache: CachedPlayers | null = null;
-
-const fixturePlayers: PalworldPlayer[] = [
-  { name: "Sakura_A", playerId: "steam_76561198012345678", userId: "12345678901234567", ip: "192.0.2.10", ping: 42, buildingCount: 126, level: 48, lastLogin: "2026-09-17T12:18:00+09:00", banned: false },
-  { name: "Kitsune", playerId: "steam_76561198087654321", userId: "12345678901234568", ip: "192.0.2.11", ping: 58, buildingCount: 84, level: 37, lastLogin: "2026-09-17T13:44:00+09:00", banned: true },
-];
 
 async function execPalworldCli(command: "info" | "metrics") {
   // コマンド名と引数は固定し、利用者入力を Docker exec の引数へ渡さない。
@@ -99,6 +119,43 @@ function normalizePlayers(value: unknown): PalworldPlayer[] {
   }).filter((player) => player.playerId.length > 0);
 }
 
+function assertPlayerId(playerId: string) {
+  if (!/^[-_a-zA-Z0-9:.]+$/.test(playerId)) throw new PlayerStoreError("不正なプレイヤー ID です", 400);
+}
+
+function normalizeRegisteredPlayers(value: unknown): RegisteredPlayer[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((player) => {
+    const item = player as Record<string, unknown>;
+    const id = String(item.id ?? item.playerId ?? "").trim();
+    return {
+      id,
+      displayName: String(item.displayName ?? item.name ?? "").trim(),
+      role: String(item.role ?? "メンバー").trim() || "メンバー",
+      white: item.white === true,
+      banned: item.banned === true,
+      level: Number.isFinite(Number(item.level)) ? Number(item.level) : 1,
+      lastLogin: typeof item.lastLogin === "string" ? item.lastLogin : null,
+      firstLogin: typeof item.firstLogin === "string" ? item.firstLogin : null,
+    };
+  }).filter((player) => player.id.length > 0);
+}
+
+async function readRegisteredPlayers() {
+  try {
+    return normalizeRegisteredPlayers(JSON.parse(await readFile(registeredPlayersFile, "utf8")) as unknown);
+  } catch {
+    return [];
+  }
+}
+
+async function writeRegisteredPlayers(players: RegisteredPlayer[]) {
+  const temporaryFile = `${registeredPlayersFile}.tmp-${process.pid}`;
+  await mkdir(settingsRoot, { recursive: true });
+  await writeFile(temporaryFile, `${JSON.stringify(players, null, 2)}\n`, "utf8");
+  await rename(temporaryFile, registeredPlayersFile);
+}
+
 async function readWhitelist(): Promise<string[]> {
   try {
     const value = JSON.parse(await readFile(whitelistFile, "utf8")) as unknown;
@@ -122,10 +179,17 @@ async function execWhitelist(command: "whitelist_add" | "whitelist_remove", play
   });
 }
 
+async function updateRegisteredPlayerWhite(playerId: string, enabled: boolean) {
+  const players = await readRegisteredPlayers();
+  if (!players.some((player) => player.id === playerId)) return;
+  await writeRegisteredPlayers(players.map((player) => player.id === playerId ? { ...player, white: enabled } : player));
+}
+
 export async function readPlayers() {
   const whitelist = await readWhitelist();
-  let onlinePlayers = onlinePlayersCache?.players ?? fixturePlayers;
-  let source: "rest-cli" | "cache" | "fixture" = onlinePlayersCache ? "cache" : "fixture";
+  const registeredPlayers = await readRegisteredPlayers();
+  let onlinePlayers = onlinePlayersCache?.players ?? [];
+  let source: "rest-cli" | "cache" | "players.json" = onlinePlayersCache ? "cache" : "players.json";
   try {
     onlinePlayers = normalizePlayers(await execPlayers());
     onlinePlayersCache = { players: onlinePlayers, updatedAt: new Date().toISOString() };
@@ -133,20 +197,54 @@ export async function readPlayers() {
   } catch {
     // サーバー停止中も、最後に取得したオンライン情報をオフライン履歴として表示する。
   }
-  return { onlinePlayers, whitelist, cachedAt: onlinePlayersCache?.updatedAt ?? null, source };
+  return { onlinePlayers, registeredPlayers, whitelist, cachedAt: onlinePlayersCache?.updatedAt ?? null, source };
 }
 
 export async function updateWhitelist(playerId: string, enabled: boolean) {
-  if (!/^[-_a-zA-Z0-9:.]+$/.test(playerId)) throw new Error("不正なプレイヤー ID です");
+  assertPlayerId(playerId);
   const whitelist = await readWhitelist();
   const next = enabled ? [...whitelist, playerId] : whitelist.filter((id) => id !== playerId);
+  await updateRegisteredPlayerWhite(playerId, enabled);
   try {
     await execWhitelist(enabled ? "whitelist_add" : "whitelist_remove", playerId);
   } catch {
     // RCON を受け付けない状態では、仕様で定めたファイルを直接更新する。
-    await writeWhitelist(next);
+    try { await writeWhitelist(next); } catch { return { playerId, enabled, whitelist: next }; }
   }
   return { playerId, enabled, whitelist: await readWhitelist() };
+}
+
+export async function addRegisteredPlayer(input: AddRegisteredPlayerInput) {
+  const playerId = input.playerId.trim();
+  const displayName = input.displayName.trim();
+  assertPlayerId(playerId);
+  if (!displayName) throw new PlayerStoreError("プレイヤー名を入力してください", 400);
+  const players = await readRegisteredPlayers();
+  if (players.some((player) => player.id === playerId)) throw new PlayerStoreError("このプレイヤーは既に登録されています", 409);
+  const timestamp = new Date().toISOString();
+  const nextPlayers = [...players, {
+    id: playerId,
+    displayName,
+    role: input.role?.trim() || "メンバー",
+    white: input.enabled,
+    banned: false,
+    level: 1,
+    lastLogin: timestamp,
+    firstLogin: timestamp,
+  }];
+  await writeRegisteredPlayers(nextPlayers);
+  if (input.enabled) await updateWhitelist(playerId, true);
+  return await readPlayers();
+}
+
+export async function deleteRegisteredPlayer(playerId: string) {
+  const normalizedPlayerId = playerId.trim();
+  assertPlayerId(normalizedPlayerId);
+  const players = await readRegisteredPlayers();
+  if (!players.some((player) => player.id === normalizedPlayerId)) throw new PlayerStoreError("登録済みプレイヤーが見つかりません", 404);
+  await writeRegisteredPlayers(players.filter((player) => player.id !== normalizedPlayerId));
+  await updateWhitelist(normalizedPlayerId, false);
+  return await readPlayers();
 }
 
 export async function listBackups() {

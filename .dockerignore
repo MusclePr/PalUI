@@ -1,0 +1,10 @@
+.git
+.next
+node_modules
+npm-debug.log*
+Dockerfile
+docker-compose*.yml
+palui/server
+palui/server/**
+*.tar.gz
+*.log

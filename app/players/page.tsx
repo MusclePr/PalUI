@@ -5,7 +5,8 @@ import {
   Menu, MessageSquare, MoreHorizontal, Search, Settings, Shield, TerminalSquare,
   Trash2, UserCheck, UserPlus, Users, X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { SidebarFooter } from "../components/SidebarFooter";
 
 type Player = {
@@ -20,10 +21,16 @@ type Player = {
   banned: boolean;
 };
 
-const fixturePlayers: Player[] = [
-  { name: "Sakura_A", playerId: "steam_76561198012345678", userId: "12345678901234567", ip: "192.0.2.10", ping: 42, buildingCount: 126, level: 48, lastLogin: "2026-09-17T12:18:00+09:00", banned: false },
-  { name: "Kitsune", playerId: "steam_76561198087654321", userId: "12345678901234568", ip: "192.0.2.11", ping: 58, buildingCount: 84, level: 37, lastLogin: "2026-09-17T13:44:00+09:00", banned: true },
-];
+type RegisteredPlayer = {
+  id: string;
+  displayName: string;
+  role: string;
+  white: boolean;
+  banned: boolean;
+  level: number;
+  lastLogin: string | null;
+  firstLogin: string | null;
+};
 
 const navItems = [
   { label: "ダッシュボード", icon: LayoutDashboard, href: "/dashboard" },
@@ -34,25 +41,47 @@ const navItems = [
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "/palui";
 
+function displayPlayerName(onlinePlayer: Player | undefined, registeredPlayer: RegisteredPlayer | undefined, playerId: string) {
+  return onlinePlayer?.name?.trim() || registeredPlayer?.displayName?.trim() || playerId;
+}
+
 export default function PlayersPage() {
   const [mobileNav, setMobileNav] = useState(false);
-  const [notice, setNotice] = useState("3人のプレイヤーがオンラインです");
+  const [notice, setNotice] = useState("players.json を読み込み中です");
   const [announce, setAnnounce] = useState("");
-  const [copiedId, setCopiedId] = useState("");
-  const [players, setPlayers] = useState<Player[]>(fixturePlayers);
-  const [whitelist, setWhitelist] = useState<string[]>(["steam_76561198847285114"]);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [registeredPlayers, setRegisteredPlayers] = useState<RegisteredPlayer[]>([]);
+  const [whitelist, setWhitelist] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [registration, setRegistration] = useState({ name: "", playerId: "", enabled: true });
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [confirmAction, setConfirmAction] = useState<{ type: "ban" | "delete"; playerId: string; playerName: string; banned: boolean } | null>(null);
-  const [deletedPlayers, setDeletedPlayers] = useState<string[]>([]);
+
+  function applyPlayersPayload(data: { onlinePlayers?: Player[]; registeredPlayers?: RegisteredPlayer[]; whitelist?: string[] }) {
+    if (Array.isArray(data.onlinePlayers)) {
+      // players REST 応答に BAN 情報がない間も、画面で保持している状態を失わない。
+      setPlayers((current) => data.onlinePlayers!.map((player) => ({
+        ...player,
+        banned: player.banned || current.find((item) => item.playerId === player.playerId)?.banned === true,
+      })));
+    }
+    if (Array.isArray(data.registeredPlayers)) setRegisteredPlayers(data.registeredPlayers);
+    if (Array.isArray(data.whitelist)) setWhitelist(data.whitelist);
+  }
+
+  async function readApiMessage(response: Response, fallback: string) {
+    const data = await response.json().catch(() => null) as { error?: unknown } | null;
+    return typeof data?.error === "string" ? data.error : fallback;
+  }
 
   useEffect(() => {
     if (!openMenu) return;
 
     function closeMenu(event: MouseEvent) {
-      const target = event.target as HTMLElement;
-      if (!target.closest(".player-menu")) setOpenMenu(null);
+      const target = event.target;
+      if (target instanceof Element && !target.closest(".player-menu, .dropdown-menu")) setOpenMenu(null);
     }
 
     function closeOnEscape(event: KeyboardEvent) {
@@ -67,36 +96,72 @@ export default function PlayersPage() {
     };
   }, [openMenu]);
 
+  useLayoutEffect(() => {
+    if (!openMenu) return;
+
+    function updateMenuPosition() {
+      const anchor = document.querySelector<HTMLButtonElement>('.player-menu button[aria-expanded="true"]');
+      const menu = menuRef.current;
+      if (!anchor || !menu) return;
+
+      const anchorRect = anchor.getBoundingClientRect();
+      const menuRect = menu.getBoundingClientRect();
+      const margin = 8;
+      const gap = 4;
+      const left = Math.max(margin, Math.min(anchorRect.right - menuRect.width, window.innerWidth - menuRect.width - margin));
+      let top = anchorRect.bottom + gap;
+      if (top + menuRect.height > window.innerHeight - margin) top = anchorRect.top - menuRect.height - gap;
+      top = Math.max(margin, Math.min(top, window.innerHeight - menuRect.height - margin));
+      setMenuPosition({ left, top });
+    }
+
+    updateMenuPosition();
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+    };
+  }, [openMenu]);
+
   useEffect(() => {
     fetch(`${basePath}/api/players`)
-      .then((response) => response.ok ? response.json() : null)
-      .then((data) => {
-        if (!data) return;
-        if (Array.isArray(data.onlinePlayers) && data.onlinePlayers.length > 0) {
-          // players REST 応答に BAN 情報がない間も、画面で保持している状態を失わない。
-          setPlayers((current) => data.onlinePlayers.map((player: Player) => ({
-            ...player,
-            banned: player.banned || current.find((item) => item.playerId === player.playerId)?.banned === true,
-          })));
-        }
-        if (Array.isArray(data.whitelist)) setWhitelist(data.whitelist);
+      .then(async (response) => {
+        if (!response.ok) throw new Error(await readApiMessage(response, `players.json を読み込めませんでした (${response.status})`));
+        return await response.json();
       })
-      .catch(() => undefined);
+      .then((data: { onlinePlayers?: Player[]; registeredPlayers?: RegisteredPlayer[]; whitelist?: string[] }) => {
+        applyPlayersPayload(data);
+        setNotice(`players.json から ${Array.isArray(data.registeredPlayers) ? data.registeredPlayers.length : 0} 件を読み込みました`);
+      })
+      .catch((error) => setNotice(error instanceof Error ? error.message : "players.json を読み込めませんでした"));
   }, []);
 
   const rows = useMemo(() => {
     const known = new Map(players.map((player) => [player.playerId, player]));
-    return [...new Set([...players.map((player) => player.playerId), ...whitelist])].map((playerId) => ({
-      ...(known.get(playerId) ?? { name: "未取得", playerId, userId: "", ip: "", ping: 0, buildingCount: 0, level: 0, lastLogin: null, banned: false }),
+    const registered = new Map(registeredPlayers.map((player) => [player.id, player]));
+    return [...new Set([...players.map((player) => player.playerId), ...registeredPlayers.map((player) => player.id), ...whitelist])].map((playerId) => {
+      const onlinePlayer = known.get(playerId);
+      const registeredPlayer = registered.get(playerId);
+      const name = displayPlayerName(onlinePlayer, registeredPlayer, playerId);
+      return {
+      ...(onlinePlayer ?? { name, playerId, userId: "", ip: "", ping: 0, buildingCount: 0, level: registeredPlayer?.level ?? 0, lastLogin: registeredPlayer?.lastLogin ?? null, banned: registeredPlayer?.banned === true }),
+      name,
+      level: onlinePlayer?.level || registeredPlayer?.level || 0,
+      lastLogin: onlinePlayer?.lastLogin ?? registeredPlayer?.lastLogin ?? null,
+      banned: onlinePlayer?.banned === true || registeredPlayer?.banned === true,
+      role: registeredPlayer?.role ?? "--",
       online: known.has(playerId),
-      whitelisted: whitelist.includes(playerId),
-    })).filter((player) => !deletedPlayers.includes(player.playerId)).filter((player) => `${player.name} ${player.playerId}`.toLowerCase().includes(search.toLowerCase()));
-  }, [deletedPlayers, players, search, whitelist]);
+      whitelisted: whitelist.includes(playerId) || registeredPlayer?.white === true,
+      };
+    }).filter((player) => `${player.name} ${player.playerId}`.toLowerCase().includes(search.toLowerCase()));
+  }, [players, registeredPlayers, search, whitelist]);
+
+  const menuPlayer = rows.find((player) => player.playerId === openMenu);
 
   function copyPlayerId(id: string) {
     navigator.clipboard?.writeText(id);
-    setCopiedId(id);
-    window.setTimeout(() => setCopiedId(""), 1500);
+    setNotice("プレイヤーIDをコピーしました");
   }
 
   function sendAnnounce(event: React.FormEvent<HTMLFormElement>) {
@@ -109,25 +174,33 @@ export default function PlayersPage() {
   async function registerPlayer(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!registration.name.trim() || !registration.playerId.trim()) return;
-    const response = await fetch(`${basePath}/api/players`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ playerId: registration.playerId.trim(), enabled: registration.enabled }) });
+    const response = await fetch(`${basePath}/api/players`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "add", displayName: registration.name.trim(), playerId: registration.playerId.trim(), enabled: registration.enabled }) });
     if (response.ok) {
       const data = await response.json();
-      setWhitelist(data.whitelist);
+      applyPlayersPayload(data);
       setNotice(`${registration.name} を登録しました`);
       setRegistration({ name: "", playerId: "", enabled: true });
-    } else setNotice("プレイヤーを登録できませんでした");
+    } else setNotice(await readApiMessage(response, "プレイヤーを登録できませんでした"));
   }
 
   async function toggleWhitelist(playerId: string, enabled: boolean) {
-    const response = await fetch(`${basePath}/api/players`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ playerId, enabled }) });
-    if (response.ok) setWhitelist((await response.json()).whitelist);
+    const response = await fetch(`${basePath}/api/players`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "whitelist", playerId, enabled }) });
+    if (response.ok) {
+      applyPlayersPayload(await response.json());
+      setNotice(`ホワイトリストを${enabled ? "有効" : "無効"}にしました`);
+    } else setNotice(await readApiMessage(response, "ホワイトリストを更新できませんでした"));
   }
 
-  function confirmPlayerAction() {
+  async function confirmPlayerAction() {
     if (!confirmAction) return;
     if (confirmAction.type === "delete") {
-      setDeletedPlayers((current) => [...current, confirmAction.playerId]);
-      setNotice(`${confirmAction.playerName} を一覧から削除しました`);
+      const response = await fetch(`${basePath}/api/players`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "delete", playerId: confirmAction.playerId }) });
+      if (response.ok) {
+        applyPlayersPayload(await response.json());
+        setNotice(`${confirmAction.playerName} を players.json とホワイトリストから削除しました`);
+      } else {
+        setNotice(await readApiMessage(response, "プレイヤーを削除できませんでした"));
+      }
     } else {
       setPlayers((current) => current.map((player) => player.playerId === confirmAction.playerId ? { ...player, banned: !confirmAction.banned } : player));
       setNotice(`${confirmAction.playerName} を${confirmAction.banned ? "UNBAN" : "BAN"}しました`);
@@ -144,7 +217,21 @@ export default function PlayersPage() {
         <nav className="main-nav" aria-label="メインナビゲーション"><p className="nav-label">OPERATIONS</p>{navItems.map(({ label, icon: Icon, href, active }) => <a href={href === "#" ? "#" : `${basePath}${href}`} className={active ? "active" : ""} key={label} onClick={href === "#" ? (event) => event.preventDefault() : undefined}><Icon size={17} /> {label}{active && <span className="nav-pip" />}</a>)}</nav>
         <SidebarFooter />
       </aside>
-      <main className="content-area">
+        {openMenu && menuPlayer && createPortal(
+          <div
+            ref={menuRef}
+            className="dropdown-menu dropdown-menu-portal"
+            role="menu"
+            aria-label={`${menuPlayer.name} の操作`}
+            style={{ left: menuPosition?.left ?? -10000, top: menuPosition?.top ?? 0, visibility: menuPosition ? "visible" : "hidden" }}
+          >
+            <button onClick={() => { copyPlayerId(menuPlayer.playerId); setOpenMenu(null); }}><Copy size={14} /> プレイヤーIDのコピー</button>
+            <button onClick={() => { setOpenMenu(null); setConfirmAction({ type: "ban", playerId: menuPlayer.playerId, playerName: menuPlayer.name, banned: menuPlayer.banned }); }}><Ban size={14} /> {menuPlayer.banned ? "UNBAN" : "BAN"}</button>
+            <button className="danger-menu-item" onClick={() => { setOpenMenu(null); setConfirmAction({ type: "delete", playerId: menuPlayer.playerId, playerName: menuPlayer.name, banned: menuPlayer.banned }); }}><Trash2 size={14} /> 削除</button>
+          </div>,
+          document.body
+        )}
+        <main className="content-area">
         <header className="topbar"><button className="icon-button menu-trigger" onClick={() => setMobileNav(true)} aria-label="メニューを開く"><Menu size={20} /></button><div className="breadcrumbs"><span>OPERATIONS</span><b>/</b><strong>プレイヤー</strong></div><div className="topbar-meta"><span className="live-indicator"><i /> LIVE</span><span className="topbar-divider" /><span className="muted">17 Sep 2026, 14:32 JST</span></div></header>
         <div className="page-content">
           <div className="page-heading"><div><p className="eyebrow">PLAYER MANAGEMENT / 02</p><h1>プレイヤー</h1><p className="muted">オンライン・オフライン・ホワイトリストを統合して表示します。</p></div><span className="status-badge success"><Check size={13} /> サーバー接続中</span></div>

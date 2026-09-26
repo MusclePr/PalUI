@@ -4,13 +4,17 @@ set -e
 
 source .env
 
+: "${STEAM_WEBAPIKEY:?STEAM_WEBAPIKEY is not set}"
+
 declare -a WHITELIST
 declare -a NOT_WHITELIST
 declare -a STEAM_IDS
 declare -A STEAM_NAMES
+declare -A LAST_LOGIN
+declare -A LAST_LOGIN_IP
 declare PlayersJSON
 
-MODE="${MODE:-console}"
+MODE="${MODE:-json}"
 
 PlayersJSONFile="./players.json"
 
@@ -101,7 +105,6 @@ function Fetch_GetSteamPlayerSummaries() {
   if [ -n "${ids}" ]; then
     local -r url="https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${STEAM_WEBAPIKEY}&steamids=${ids}"
     local list id name
-    #echo "URL: \"${url}\""
     list="$(curl -sSRL "${url}" | jq -r '.response.players[] | .steamid+","+.personaname')"
     while IFS=, read -r id name; do
       #printf 'STEAM_NAMES["%s"]="%s"\n' "${id}" "${name}"
@@ -124,7 +127,7 @@ function FormatAnchor() {
 function LoadWhitelist() {
   local -n list=$1
   local ids id
-  ids="$(jq -r '.[]' ./PalDefender/WhiteList.json)"
+  ids="$(jq -r '.[]' ./palworld/Pal/Binaries/Win64/PalDefender/WhiteList.json)"
   while IFS= read -r id; do
     [ -z "${id}" ] && continue
     WHITEMAP[$id]=true
@@ -150,41 +153,34 @@ function FormatID() {
   steam_id="$(GetSteamID "${id}")" && \
     anchor="$(FormatAnchor "https://steamcommunity.com/profiles/${steam_id}" "${name:-URL}")"
   if [ "${MODE}" = "json" ]; then
-    if [[ "${anchor}" =~ href=\"([^\"]+)\"\>([^\<]+) ]]; then
-      anchor="${BASH_REMATCH[1]}"
-      name="${BASH_REMATCH[2]}"
-      printf '{"id":"%s", "displayName":"%s", "white": %s, "url":"%s"}' "${id}" "${name}" "${white:-false}" "${anchor}"
-    else
-      printf '{"id":"%s", "displayName":"%s", "white": %s}' "${id}" "${anchor}" "${white:-false}"
-    fi
+    printf '{"id":"%s", "lastLogin":"%s", "displayName":"%s", "white": %s}' "${id}" "${LAST_LOGIN["${id}"]}" "${name}" "${white:-false}"
   else
-    printf '%s %s' "${id}" "${anchor}"
+    printf '%s %s %s' "${id}" "${LAST_LOGIN["${id}"]}" "${anchor}"
   fi
 }
 
 function ShowNumberedIDList() {
   local -n list=$1
-  local -i i=0 last
-  local id label comma
-  last=$((${#list[@]}-1))
-  if [ "${MODE}" = "json" ]; then echo '['; fi
+  local -i i=0
+  local id label
+  local json="[\n"
   for id in "${list[@]}"; do
+    label="$(FormatID "${id}")"
     if [ "${MODE}" = "json" ]; then
-      label="$(FormatID "${id}")"
-      comma="$([ $i -ne $last ] && echo ',' || echo '')"
-      printf '  %s%s\n' "${label}" "${comma}"
+      json+="  ${label},\n"
     else
-      label="$(FormatID "${id}")"
       printf '%2d: %s\n' "${i}" "${label}"
     fi
     i=$((i+1))
   done
-  if [ "${MODE}" = "json" ]; then echo ']'; fi
+  if [ "${MODE}" = "json" ]; then
+    echo -e "${json%,\\n}\n]"
+  fi
 }
 
 function IsContainOf() {
-  local -n list=$1
-  for key in "${list[@]}"; do
+  local -n cont=$1
+  for key in "${cont[@]}"; do
     [ "${key}" = "${2}" ] && return 0
   done
   return 1
@@ -192,13 +188,22 @@ function IsContainOf() {
 
 function FetchNotWhitelist() {
   local -n list=$1
-  local ids id
-  ids="$(docker logs ${NAME} | grep -E 'is not whitelisted' | sed -E 's/.+\] ([a-zA-Z0-9_]+) .*/\1/')"
+  local ids utc_time id ip logs
+  logs="$(docker compose logs --no-log-prefix --no-color -t pal | grep -E 'is not whitelisted' || echo "")"
+  # デバッグ用のログでフォールバック
+  [ -z "${logs}" ] && logs="$(cat ./palworld-server-not-whitelisted.log)"
+  ids="$(echo "${logs}" | sed -E 's/^([^ ]+).*\[info\] (\w+) \| ([0-9\.]+).*/\1 \2 \3/')"
   i=0
-  while IFS= read -r id; do
+  while IFS= read -r line; do
+    utc_time="$(echo "${line}" | awk '{print $1}')"
+    id="$(echo "${line}" | awk '{print $2}')"
+    ip="$(echo "${line}" | awk '{print $3}')"
     [ -z "${id}" ] && continue
     IsContainOf WHITELIST "${id}" && continue
+    IsContainOf list "${id}" && continue
     list+=("${id}")
+    LAST_LOGIN["${id}"]="${utc_time}"
+    LAST_LOGIN_IP["${id}"]="${ip}"
   done <<< "${ids}"
 }
 

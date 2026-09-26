@@ -171,7 +171,7 @@ palui は以下の REST API 操作を提供する。返却 JSON は構造化し�
 MOD_USE_PALDEFENDER=true の設定により、PalDefender MOD がインストールされ、ホワイトリスト機能を提供します。
 PalDefender MODが未導入または RCON コマンドが未対応の場合、さらに、/palworld/Pal/Binaries/Win64/PalDefender/Config.json の `{ "useWhitelist": true }` になっていなければ、機能を無効化し理由を表示する。
 
-`docker exec -itu steam palworld-server rcon-cli "<RCONコマンド>"`
+`docker compose exec -itu steam palserver rcon-cli "<RCONコマンド>"`
 
 | RCONコマンド | UI機能 | 権限 |
 | --- | --- | --- |
@@ -200,7 +200,7 @@ PalDefender MODが未導入または RCON コマンドが未対応の場合、�
 1. 接続を試みたが、ホワイトリストから蹴られた人の一覧。この中には、既にホワイトリストに登録済みのIDも含まれます。
 
   ```
-  $ docker logs -t palworld-server | grep -E 'is not whitelisted'
+  $ docker compose logs --no-log-prefix --no-color -t palserver | grep -E 'is not whitelisted'
   2026-09-16T07:05:38.729243365Z [08:05:28][info] ps5_2383497052811828308 | 133.18.230.198 is not whitelisted, refusing join request...
   2026-09-21T12:38:59.935112739Z [13:38:49][info] steam_76561198156963008 | 133.18.230.198 is not whitelisted, refusing join request...
   2026-09-21T12:43:45.772071958Z [13:43:35][info] steam_76561198156963008 | 133.167.33.171 is not whitelisted, refusing join request...

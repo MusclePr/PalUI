@@ -1,5 +1,4 @@
-/palui/server/palworld
-/palui/server/.passwd
+/palui/server/
 node_modules/
 .next/
 out/

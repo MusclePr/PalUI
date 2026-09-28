@@ -9,7 +9,7 @@ services:
       #- NET_ADMIN  # NFLOG requires this
     #user: "${PUID:-1000}:${PGID:-1000}"
     ports:
-      - 8211:8211/udp
+      - ${PUBLIC_PORT:-8211}:8211/udp
     volumes:
       - type: bind
         source: __HOST_SERVER_DIR__
@@ -25,3 +25,35 @@ services:
       - TZ=${TZ:-Etc/UTC}
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+
+  map:
+    container_name: ${COMPOSE_PROJECT_NAME}-map
+    image: ghcr.io/musclepr/palworld-live-map:latest
+    tty: true
+    volumes:
+      - type: bind
+        source: __HOST_SERVER_DIR__
+        target: /palworld-data
+        read_only: true
+    ports:
+      - "${MAP_PORT:-8080}:8080"
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      PALWORLD_REST_URL: http://proxy:8212
+      PALWORLD_ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin}"
+      PALWORLD_SAVE_ROOT: /palworld-data/Pal/Saved/SaveGames/0
+      SAVE_DATA_ENABLED: "true"
+
+  proxy:
+    container_name: ${COMPOSE_PROJECT_NAME}-proxy
+    image: ghcr.io/musclepr/palworld-api-proxy:latest
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      TARGET_URL: http://pal:8212
+      PROXY_PORT: "8212"
+      LOG_LEVEL: error
+    volumes:
+      - type: bind
+        source: __HOST_SERVER_DIR__
+        target: /palworld
+        read_only: true

@@ -95,6 +95,8 @@ host
 
   テンプレートのコピーは既存ファイルを上書きしないため、既存設定やゲームデータは保持される一方、既存ファイルに対するテンプレート更新は自動適用されない。追加された新規ファイルは次回起動時に配置される。`compose.yml` は例外として `template.compose.yml` から毎回再生成されるため、直接編集してはならない。既存の `template.compose.yml` も自動更新されないため、更新時は必要に応じて手動で移行する。
 
+  Palworld 専用サーバーの Compose には `pal`、`map`、`proxy` サービスが含まれる。`map` は `MAP_PORT`（既定値 `8080`）で公開されるため、palui や他サービスとホストポートが重複しない値を設定する。`ADMIN_PASSWORD` は Live Map が REST API に接続するためのパスワードで、Palworld サーバー側の管理者パスワードと一致させる。
+
 ```mermaid
 flowchart LR
   Browser[管理者・運用者のブラウザ] --> Proxy[リバースプロキシ]

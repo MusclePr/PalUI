@@ -68,8 +68,9 @@
 
 ### 4.1 必須のホスト構成
 
-管理対象プロジェクトの `compose.yml` はホストの `./palui/server/` に配置する。
-palui の Compose プロジェクトからは、同じディレクトリを `/server` としてバインドマウントする。
+管理対象プロジェクトのテンプレートは `./palui/template/` に配置する。Docker 起動時はイメージ内の `/template/` から `/server/` へ不足ファイルだけをコピーし、`template.compose.yml` を基に `/server/compose.yml` を生成する。palui の Compose プロジェクトからは、ホストの `./palui/server/` を `/server` としてバインドマウントする。
+
+ネイティブ開発では `./run.sh` が同じ初期化を行い、リポジトリの `./palui/server/` に不足ファイルを配置する。`npm run dev` を直接実行した場合は初期化されない。
 
 ```text
 host
@@ -87,9 +88,12 @@ host
     |- .env ... ホスト向け環境変数（palui の管理対象）
     |- .passwd ... palui の管理者・運用者パスワードハッシュ（0600、Git管理対象外）
     |- players.json ... 登録済みプレイヤー（ID、名前、ロール、ホワイトリスト状態、BAN状態、初回ログイン日時、最終ログイン日時などを保存しておくためのファイル）
-    |- compose.yml ... Palworld 専用サーバーのComposeファイル（palui の管理対象）
+    |- template.compose.yml ... Palworld 専用サーバーのComposeテンプレート
+    |- compose.yml ... テンプレートから起動時に生成（起動ごとに上書き）
     `- override.env ... コンテナ向け環境変数（palui の管理対象）
 ```
+
+  テンプレートのコピーは既存ファイルを上書きしないため、既存設定やゲームデータは保持される一方、既存ファイルに対するテンプレート更新は自動適用されない。追加された新規ファイルは次回起動時に配置される。`compose.yml` は例外として `template.compose.yml` から毎回再生成されるため、直接編集してはならない。既存の `template.compose.yml` も自動更新されないため、更新時は必要に応じて手動で移行する。
 
 ```mermaid
 flowchart LR
@@ -122,6 +126,10 @@ services:
 | 設定操作 | `/server` のファイル API | 対象Composeとdotenvの読取、検証、原子的保存。 |
 
 Compose コマンドを組み立てる際、利用者入力をシェル文字列として連結してはならない。固定したサブコマンドと引数配列を使い、許可した操作だけを実行する。
+
+#### DooD 注意点
+
+コンテナ内からの Docker 操作は `/var/run/docker.sock` を通じてホスト上で実行される。そのため、Palworld Compose の bind mount にはホストから見える絶対パスが必要となる。entrypoint は `/server` の mount 情報からこのパスを取得し、`template.compose.yml` の `__HOST_SERVER_DIR__` を置換して `compose.yml` を生成する。値は PalUI の環境変数としては公開しない。`/server` の mount またはテンプレートを利用できず Compose を生成できない場合、誤ったパスで起動しないよう PalUI の起動を中断する。
 
 ## 5. 機能要件
 
@@ -264,8 +272,7 @@ PalDefender MODが未導入または RCON コマンドが未対応の場合、�
 
 ### 6.1 編集対象と保存手順
 
-paluiは `/server/compose.yml` を直接編集しない。対象Composeが `env_file` で参照する `/server` 配下のdotenvファイル、具体的には `/server/.env`、`/server/override.env`、`/server/defaults/*.env` を編集対象とする。`defaults/*.env` は既定値として扱い、通常の変更値は `override.env` に保存する。
-対象Composeは事前に用意されているものを使用し、存在しない場合は設定操作をエラーとして終了する。
+paluiは起動時に生成する `/server/compose.yml` を直接編集しない。対象Composeが `env_file` で参照する `/server` 配下のdotenvファイル、具体的には `/server/.env`、`/server/override.env`、`/server/defaults/*.env` を編集対象とする。`defaults/*.env` は既定値として扱い、通常の変更値は `override.env` に保存する。生成対象の `template.compose.yml` または必要な設定ファイルが存在しない場合は起動時にエラーとする。
 
 保存手順は次の順に固定する。
 

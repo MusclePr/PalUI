@@ -33,6 +33,11 @@ if [[ ! -d node_modules ]]; then
   npm ci
 fi
 
+node "$ROOT_DIR/scripts/bootstrap-server.mjs" \
+  --template "$ROOT_DIR/palui/template" \
+  --destination "$ROOT_DIR/palui/server" \
+  --host-server-dir "$ROOT_DIR/palui/server"
+
 HOST="${HOST:-localhost}"
 PORT="${PORT:-3000}"
 BASE_PATH="${NEXT_PUBLIC_BASE_PATH:-/palui}"

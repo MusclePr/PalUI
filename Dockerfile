@@ -76,12 +76,13 @@ RUN curl -fsSLO "$SUPERCRONIC_URL" \
 RUN groupmod -n palui node \
   && usermod -l palui -d /home/palui -m -s /usr/sbin/nologin node
 
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
+COPY --chown=palui:palui --from=builder /app/.next/standalone ./
+COPY --chown=palui:palui --from=builder /app/.next/static ./.next/static
+COPY --chown=palui:palui ./palui/template /template
+COPY --chown=palui:palui scripts/bootstrap-server.mjs /usr/local/bin/bootstrap-server.mjs
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
-  && mkdir -p /server \
-  && chown -R palui:palui /app
+  && mkdir -p /server
 
 EXPOSE 3000
 STOPSIGNAL SIGTERM

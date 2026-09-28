@@ -1,4 +1,3 @@
-# Generated from template.compose.yml at startup; local edits are overwritten.
 ---
 services:
   pal:
@@ -13,7 +12,7 @@ services:
       - 8211:8211/udp
     volumes:
       - type: bind
-        source: "/home/nakano/dev/palui/palui/server/palworld"
+        source: __HOST_SERVER_DIR__
         target: /palworld
     env_file:
       - ./defaults/game_balance.env

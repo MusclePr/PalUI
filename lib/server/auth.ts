@@ -58,6 +58,23 @@ export function readSession(cookie: string | undefined): AuthRole | null {
   } catch { return null; }
 }
 
+export function isSameOriginRequest(request: Request) {
+  const origin = request.headers.get("origin");
+  if (!origin) return false;
+
+  try {
+    const requestUrl = new URL(request.url);
+    const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0].trim();
+    const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0].trim();
+    const host = forwardedHost || request.headers.get("host") || requestUrl.host;
+    const protocol = (forwardedProto || requestUrl.protocol.slice(0, -1)).toLowerCase();
+    if (protocol !== "http" && protocol !== "https") return false;
+    return new URL(origin).origin === new URL(`${protocol}://${host}`).origin;
+  } catch {
+    return false;
+  }
+}
+
 export async function getAuthState() {
   const values = readEnv(await readFile(await getCredentialsPath(), "utf8").catch(() => ""));
   return { configured: Boolean(values.ADMIN_PASSWORD_HASH && values.OP_PASSWORD_HASH), values };

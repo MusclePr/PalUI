@@ -9,7 +9,7 @@ services:
       #- NET_ADMIN  # NFLOG requires this
     #user: "${PUID:-1000}:${PGID:-1000}"
     ports:
-      - ${PUBLIC_PORT:-8211}:8211/udp
+      - ${PAL_PORT:-8211}:8211/udp
     volumes:
       - type: bind
         source: __HOST_SERVER_DIR__
@@ -25,6 +25,7 @@ services:
       - TZ=${TZ:-Etc/UTC}
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-adminPasswordHere}
 
   map:
     container_name: ${COMPOSE_PROJECT_NAME}-map
@@ -40,7 +41,7 @@ services:
     environment:
       TZ: ${TZ:-Etc/UTC}
       PALWORLD_REST_URL: http://proxy:8212
-      PALWORLD_ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin}"
+      PALWORLD_ADMIN_PASSWORD: "${ADMIN_PASSWORD:-adminPasswordHere}"
       PALWORLD_SAVE_ROOT: /palworld-data/Pal/Saved/SaveGames/0
       SAVE_DATA_ENABLED: "true"
 

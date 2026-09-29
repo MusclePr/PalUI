@@ -150,9 +150,11 @@ export default function PlayersPage() {
         if (!response.ok) throw new Error(await readApiMessage(response, `players.json を読み込めませんでした (${response.status})`));
         return await response.json();
       })
-      .then((data: { onlinePlayers?: Player[]; registeredPlayers?: RegisteredPlayer[]; whitelist?: string[] }) => {
+      .then((data: { onlinePlayers?: Player[]; registeredPlayers?: RegisteredPlayer[]; whitelist?: string[]; paused?: boolean }) => {
         applyPlayersPayload(data);
-        setNotice(`players.json から ${Array.isArray(data.registeredPlayers) ? data.registeredPlayers.length : 0} 件を読み込みました`);
+        setNotice(data.paused
+          ? "AUTO PAUSE中のためオンライン情報の更新を保留しています"
+          : `players.json から ${Array.isArray(data.registeredPlayers) ? data.registeredPlayers.length : 0} 件を読み込みました`);
       })
       .catch((error) => setNotice(error instanceof Error ? error.message : "players.json を読み込めませんでした"));
   }, []);

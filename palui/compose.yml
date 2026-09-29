@@ -9,10 +9,10 @@ services:
       - "PGID=${PGID:-1000}"
       - "DOCKER_GID=${DOCKER_GID:-}"
       - "NEXT_PUBLIC_BASE_PATH=${NEXT_PUBLIC_BASE_PATH:-/palui}"
-      - "NEXTAUTH_URL=http://localhost:8080${NEXT_PUBLIC_BASE_PATH:-/palui}"
+      - "NEXTAUTH_URL=http://localhost${PALUI_PORT:+:}${PALUI_PORT:-8080}${NEXT_PUBLIC_BASE_PATH:-/palui}"
       - "COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}_pal"
     volumes:
       - ./server:/server
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
-      - "8080:3000"
+      - "${PALUI_PORT:-8080}:3000"

@@ -1,23 +1,25 @@
-import { access, mkdir, readFile, readdir, rename, stat, statfs, unlink, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { mkdir, open, readFile, readdir, rename, stat, statfs, unlink, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { parse as parseDotenv } from "dotenv";
+import { isPalworldPaused, PalworldPausedError, resumePalworldIfPaused, runPalworldCommand, runPalworldRconCommand } from "./compose";
 
 const execFileAsync = promisify(execFile);
-const containerName = "palworld-server";
-const pausedFile = "/server/palworld/.paused";
 const whitelistFile = "/server/palworld/Pal/Binaries/Win64/PalDefender/WhiteList.json";
 const backupDirectory = "/server/palworld/backups";
 const settingsRoot = process.env.PALUI_SERVER_DIR ?? (existsSync("/server") ? "/server" : `${process.cwd()}/palui/server`);
 const registeredPlayersFile = `${settingsRoot}/players.json`;
 const settingsFiles = {
-  system: "defaults/system.env",
-  server: "defaults/game_server.env",
-  features: "defaults/game_features.env",
-  balance: "defaults/game_balance.env",
-  performance: "defaults/game_performance.env",
+  compose: { defaults: "defaults/compose.env", target: ".env" },
+  system: { defaults: "defaults/system.env", target: "override.env" },
+  server: { defaults: "defaults/game_server.env", target: "override.env" },
+  features: { defaults: "defaults/game_features.env", target: "override.env" },
+  balance: { defaults: "defaults/game_balance.env", target: "override.env" },
+  performance: { defaults: "defaults/game_performance.env", target: "override.env" },
 } as const;
+const settingsTargets = [".env", "override.env"] as const;
 
 export type PalworldInfo = {
   version: string;
@@ -94,26 +96,20 @@ let onlinePlayersCache: CachedPlayers | null = null;
 
 async function execPalworldCli(command: "info" | "metrics") {
   // コマンド名と引数は固定し、利用者入力を Docker exec の引数へ渡さない。
-  const result = await execFileAsync("docker", ["exec", "-itu", "steam", containerName, "rest-cli", command], {
-    timeout: 10_000,
-    maxBuffer: 256 * 1024,
-  });
+  const result = await runPalworldCommand(["rest-cli", command]);
   return JSON.parse(result.stdout) as unknown;
 }
 
 async function execPlayers() {
-  const result = await execFileAsync("docker", ["exec", "-itu", "steam", containerName, "rest-cli", "players"], {
-    timeout: 10_000,
-    maxBuffer: 256 * 1024,
-  });
+  const result = await runPalworldCommand(["rest-cli", "players"]);
   return JSON.parse(result.stdout) as unknown;
 }
 
 async function execContainerCommand(command: "save" | "backup" | "restore", argument?: string) {
   // バックアップ操作もコマンドと引数を固定し、ファイル名をシェル文字列へ連結しない。
-  const args = ["exec", "-itu", "steam", containerName, command];
+  const args: string[] = [command];
   if (argument) args.push(argument);
-  return execFileAsync("docker", args, { timeout: 60_000, maxBuffer: 128 * 1024 });
+  return runPalworldCommand(args, 60_000);
 }
 
 function normalizePlayers(value: unknown): PalworldPlayer[] {
@@ -189,10 +185,7 @@ async function writeWhitelist(playerIds: string[]) {
 }
 
 async function execWhitelist(command: "whitelist_add" | "whitelist_remove", playerId: string) {
-  await execFileAsync("docker", ["exec", "-itu", "steam", containerName, "rcon-cli", `${command} ${playerId}`], {
-    timeout: 5_000,
-    maxBuffer: 64 * 1024,
-  });
+  await runPalworldRconCommand([`${command} ${playerId}`], 5_000);
 }
 
 async function updateRegisteredPlayerWhite(playerId: string, enabled: boolean) {
@@ -202,28 +195,39 @@ async function updateRegisteredPlayerWhite(playerId: string, enabled: boolean) {
 }
 
 export async function readPlayers() {
+  let paused = await isPalworldPaused();
   const whitelist = await readWhitelist();
   const registeredPlayers = await readRegisteredPlayers();
   let onlinePlayers = onlinePlayersCache?.players ?? [];
   let source: "rest-cli" | "cache" | "players.json" = onlinePlayersCache ? "cache" : "players.json";
-  try {
-    onlinePlayers = normalizePlayers(await execPlayers());
-    onlinePlayersCache = { players: onlinePlayers, updatedAt: new Date().toISOString() };
-    source = "rest-cli";
-  } catch {
-    // サーバー停止中も、最後に取得したオンライン情報をオフライン履歴として表示する。
+  if (!paused) {
+    try {
+      onlinePlayers = normalizePlayers(await execPlayers());
+      onlinePlayersCache = { players: onlinePlayers, updatedAt: new Date().toISOString() };
+      source = "rest-cli";
+    } catch (error) {
+      if (error instanceof PalworldPausedError) paused = true;
+      // サーバー停止中も、最後に取得したオンライン情報をオフライン履歴として表示する。
+    }
   }
-  return { onlinePlayers, registeredPlayers, whitelist, cachedAt: onlinePlayersCache?.updatedAt ?? null, source };
+  return { onlinePlayers, registeredPlayers, whitelist, cachedAt: onlinePlayersCache?.updatedAt ?? null, paused, source };
 }
 
 export async function updateWhitelist(playerId: string, enabled: boolean) {
   assertPlayerId(playerId);
+  try {
+    await resumePalworldIfPaused();
+  } catch {
+    throw new PlayerStoreError("AUTO PAUSEから復帰できないためRCONを実行できません", 503);
+  }
   const whitelist = await readWhitelist();
   const next = enabled ? [...whitelist, playerId] : whitelist.filter((id) => id !== playerId);
   await updateRegisteredPlayerWhite(playerId, enabled);
   try {
     await execWhitelist(enabled ? "whitelist_add" : "whitelist_remove", playerId);
-  } catch {
+  } catch (error) {
+    if (error instanceof PalworldPausedError) throw new PlayerStoreError(error.message, 409);
+    if (await isPalworldPaused()) throw new PlayerStoreError("AUTO PAUSEから復帰できなかったためRCONを実行できません", 503);
     // RCON を受け付けない状態では、仕様で定めたファイルを直接更新する。
     try { await writeWhitelist(next); } catch { return { playerId, enabled, whitelist: next }; }
   }
@@ -231,6 +235,13 @@ export async function updateWhitelist(playerId: string, enabled: boolean) {
 }
 
 async function execWhitelistScript(args: string[]) {
+  if (args[0] === "add" || args[0] === "remove") {
+    try {
+      await resumePalworldIfPaused();
+    } catch {
+      throw new PlayerStoreError("AUTO PAUSEから復帰できないためRCONを実行できません", 503);
+    }
+  }
   return execFileAsync("bash", ["./whitelist.sh", ...args], {
     cwd: settingsRoot,
     env: { ...process.env, MODE: "json" },
@@ -302,6 +313,13 @@ export async function addRegisteredPlayer(input: AddRegisteredPlayerInput) {
   const displayName = input.displayName.trim();
   assertPlayerId(playerId);
   if (!displayName) throw new PlayerStoreError("プレイヤー名を入力してください", 400);
+  if (input.enabled) {
+    try {
+      await resumePalworldIfPaused();
+    } catch {
+      throw new PlayerStoreError("AUTO PAUSEから復帰できないためRCONを実行できません", 503);
+    }
+  }
   const players = await readRegisteredPlayers();
   if (players.some((player) => player.id === playerId)) throw new PlayerStoreError("このプレイヤーは既に登録されています", 409);
   const timestamp = new Date().toISOString();
@@ -323,6 +341,11 @@ export async function addRegisteredPlayer(input: AddRegisteredPlayerInput) {
 export async function deleteRegisteredPlayer(playerId: string) {
   const normalizedPlayerId = playerId.trim();
   assertPlayerId(normalizedPlayerId);
+  try {
+    await resumePalworldIfPaused();
+  } catch {
+    throw new PlayerStoreError("AUTO PAUSEから復帰できないためRCONを実行できません", 503);
+  }
   const players = await readRegisteredPlayers();
   if (!players.some((player) => player.id === normalizedPlayerId)) throw new PlayerStoreError("登録済みプレイヤーが見つかりません", 404);
   await writeRegisteredPlayers(players.filter((player) => player.id !== normalizedPlayerId));
@@ -368,8 +391,13 @@ export async function readStorageUsage() {
   }
 }
 
-export async function createBackup() {
+export async function savePalworldWorld() {
   await execContainerCommand("save");
+  return { saved: true };
+}
+
+export async function createBackup() {
+  await savePalworldWorld();
   await execContainerCommand("backup");
   return { created: true, backups: await listBackups() };
 }
@@ -384,14 +412,6 @@ export async function deleteBackup(name: string) {
   if (!/^[a-zA-Z0-9._-]+\.tar\.gz$/.test(name)) throw new Error("不正なバックアップ名です");
   await unlink(`${backupDirectory}/${name}`);
   return { deleted: true, name };
-}
-
-function parseDotenv(content: string) {
-  return content.split("\n").reduce<Record<string, string>>((values, line) => {
-    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)\s*$/);
-    if (match) values[match[1]] = match[2].replace(/^"|"$/g, "");
-    return values;
-  }, {});
 }
 
 type SettingType = "BOOL" | "INT" | "FLOAT" | "STR" | "PASSWORD" | "ARRAY" | "CHOICE" | "SELECT";
@@ -449,50 +469,156 @@ function validateSetting(value: string, metadata: SettingMetadata) {
   }
 }
 
-function settingsHash(values: Record<string, string>) {
-  return createHash("sha256").update(JSON.stringify(values, Object.keys(values).sort())).digest("hex");
+type SettingsTarget = typeof settingsTargets[number];
+
+async function readSettingsContents(): Promise<Record<SettingsTarget, string>> {
+  const entries = await Promise.all(settingsTargets.map(async (target) => [target, await readFile(`${settingsRoot}/${target}`, "utf8").catch(() => "")] as const));
+  return Object.fromEntries(entries) as Record<SettingsTarget, string>;
+}
+
+function settingsHash(contents: Record<SettingsTarget, string>) {
+  const stableContents = settingsTargets.map((target) => [target, contents[target]]);
+  return createHash("sha256").update(JSON.stringify(stableContents)).digest("hex");
+}
+
+function inlineComment(value: string) {
+  let quote = "";
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (escaped) { escaped = false; continue; }
+    if (character === "\\" && quote === '"') { escaped = true; continue; }
+    if (quote) { if (character === quote) quote = ""; continue; }
+    if (character === '"' || character === "'") { quote = character; continue; }
+    if (character === "#" && index > 0 && /\s/.test(value[index - 1])) {
+      let commentStart = index;
+      while (commentStart > 0 && /\s/.test(value[commentStart - 1])) commentStart -= 1;
+      return value.slice(commentStart);
+    }
+  }
+  return "";
+}
+
+function updateDotenv(content: string, changes: Map<string, string | null>, header = "") {
+  const current = parseDotenv(content);
+  for (const key of changes.keys()) {
+    if (/[\r\n]/.test(current[key] ?? "")) throw new Error(`${key}: 複数行の値は設定画面から更新できません`);
+  }
+
+  const lines = content.match(/[^\n]*(?:\n|$)/g)?.filter(Boolean) ?? [];
+  const found = new Set<string>();
+  const updatedLines = lines.flatMap((line) => {
+    const body = line.replace(/\r?\n$/, "");
+    const ending = line.slice(body.length);
+    const match = body.match(/^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(.*)$/);
+    if (!match || !changes.has(match[2])) return [line];
+    found.add(match[2]);
+    const value = changes.get(match[2]);
+    const comment = inlineComment(match[4]);
+    if (value === null) {
+      const indentation = match[1].match(/^\s*/)?.[0] ?? "";
+      return comment ? [`${indentation}${comment.trimStart()}${ending}`] : [];
+    }
+    return [`${match[1]}${match[2]}${match[3]}${JSON.stringify(value)}${comment}${ending}`];
+  });
+
+  const additions = [...changes].filter(([key, value]) => value !== null && !found.has(key));
+  if (additions.length === 0) return updatedLines.join("");
+  const newline = content.includes("\r\n") ? "\r\n" : "\n";
+  let result = updatedLines.join("");
+  if (!result && header) result = header;
+  if (result && !result.endsWith("\n")) result += newline;
+  if (result && header && result === header && !result.endsWith("\n")) result += newline;
+  return `${result}${additions.map(([key, value]) => `${key}=${JSON.stringify(value)}${newline}`).join("")}`;
+}
+
+async function writeSettingsFile(target: SettingsTarget, content: string) {
+  const file = `${settingsRoot}/${target}`;
+  const mode = await stat(file).then((info) => info.mode & 0o777).catch(() => target === ".env" ? 0o600 : 0o644);
+  const temporaryFile = `${file}.tmp-${process.pid}-${randomUUID()}`;
+  let fileHandle;
+  try {
+    fileHandle = await open(temporaryFile, "wx", mode);
+    await fileHandle.writeFile(content, "utf8");
+    await fileHandle.sync();
+    await fileHandle.close();
+    fileHandle = undefined;
+    await rename(temporaryFile, file);
+  } catch (error) {
+    await fileHandle?.close().catch(() => undefined);
+    await unlink(temporaryFile).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function readSettings() {
-  const overrideContent = await readFile(`${settingsRoot}/override.env`, "utf8").catch(() => "");
-  const override = parseDotenv(overrideContent);
-  const categories = await Promise.all(Object.entries(settingsFiles).map(async ([category, relativePath]) => {
-    const content = await readFile(`${settingsRoot}/${relativePath}`, "utf8").catch(() => "");
+  const fileContents = await readSettingsContents();
+  const parsedFiles = Object.fromEntries(settingsTargets.map((target) => [target, parseDotenv(fileContents[target])])) as Record<SettingsTarget, Record<string, string>>;
+  const categories = await Promise.all(Object.entries(settingsFiles).map(async ([category, definition]) => {
+    const content = await readFile(`${settingsRoot}/${definition.defaults}`, "utf8").catch(() => "");
     const defaults = parseDefaultSettings(content);
+    const current = parsedFiles[definition.target];
     return {
       category,
-      values: Object.entries(defaults).map(([key, setting]) => ({ key, value: override[key] ?? setting.defaultValue, defaultValue: setting.defaultValue, overridden: key in override, secret: setting.metadata.type === "PASSWORD" || /PASSWORD|TOKEN|SECRET|KEY/i.test(key), ...setting.metadata })),
+      values: Object.entries(defaults).map(([key, setting]) => ({ key, value: current[key] ?? setting.defaultValue, defaultValue: setting.defaultValue, overridden: key in current, secret: setting.metadata.type === "PASSWORD" || /PASSWORD|TOKEN|SECRET|KEY/i.test(key), ...setting.metadata })),
     };
   }));
-  return { categories, hash: settingsHash(override), overridden: Object.keys(override).length };
+  return { categories, hash: settingsHash(fileContents), overridden: Object.values(parsedFiles).reduce((count, values) => count + Object.keys(values).length, 0) };
 }
 
 export async function saveSettings(values: Record<string, string>, expectedHash: string) {
-  const current = parseDotenv(await readFile(`${settingsRoot}/override.env`, "utf8").catch(() => ""));
-  if (settingsHash(current) !== expectedHash) throw new Error("設定ファイルが外部変更されています");
-  const metadata = (await Promise.all(Object.values(settingsFiles).map(async (relativePath) => parseDefaultSettings(await readFile(`${settingsRoot}/${relativePath}`, "utf8").catch(() => ""))))).reduce((all, category) => ({ ...all, ...category }), {} as Record<string, { defaultValue: string; metadata: SettingMetadata }>);
-  for (const [key, value] of Object.entries(values)) if (metadata[key]) validateSetting(value, metadata[key].metadata);
-  const content = `# palui によって上書きされる設定ファイル\n${Object.entries(values).filter(([key, value]) => metadata[key] && value !== metadata[key].defaultValue).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join("\n")}\n`;
-  const temporaryFile = `${settingsRoot}/override.env.tmp-${process.pid}`;
-  await writeFile(temporaryFile, content, "utf8");
-  await rename(temporaryFile, `${settingsRoot}/override.env`);
+  const currentContents = await readSettingsContents();
+  if (settingsHash(currentContents) !== expectedHash) throw new Error("設定ファイルが外部変更されています");
+
+  const settingsMetadata: Record<string, { defaultValue: string; metadata: SettingMetadata; target: SettingsTarget }> = {};
+  for (const [category, definition] of Object.entries(settingsFiles)) {
+    const content = await readFile(`${settingsRoot}/${definition.defaults}`, "utf8").catch(() => "");
+    for (const [key, setting] of Object.entries(parseDefaultSettings(content))) settingsMetadata[key] = { ...setting, target: definition.target };
+  }
+
+  const changes = new Map<SettingsTarget, Map<string, string | null>>(settingsTargets.map((target) => [target, new Map()]));
+  for (const [key, value] of Object.entries(values)) {
+    const setting = settingsMetadata[key];
+    if (!setting) continue;
+    if (typeof value !== "string") throw new Error(`${key}: 設定値の形式が不正です`);
+    validateSetting(value, setting.metadata);
+    changes.get(setting.target)?.set(key, value === setting.defaultValue ? null : value);
+  }
+
+  const updatedContents: Record<SettingsTarget, string> = {
+    ".env": updateDotenv(currentContents[".env"], changes.get(".env") ?? new Map()),
+    "override.env": updateDotenv(currentContents["override.env"], changes.get("override.env") ?? new Map(), "# palui によって上書きされる設定ファイル\n"),
+  };
+  const written = new Map<SettingsTarget, string>();
+  for (const target of settingsTargets) {
+    if (updatedContents[target] === currentContents[target]) continue;
+    const latestContents = await readSettingsContents();
+    const expectedContents = { ...currentContents, ...Object.fromEntries(written) } as Record<SettingsTarget, string>;
+    if (settingsHash(latestContents) !== settingsHash(expectedContents)) throw new Error("設定ファイルが外部変更されています");
+    await writeSettingsFile(target, updatedContents[target]);
+    written.set(target, updatedContents[target]);
+  }
   return readSettings();
 }
 
-export async function readPalworldOverview() {
-  const paused = await access(pausedFile).then(() => true).catch(() => false);
+export async function readPalworldOverview(allowRestCommands = true) {
+  const paused = await isPalworldPaused();
+  if (!allowRestCommands || paused) {
+    return { paused, info: null, metrics: null, errors: { info: null, metrics: null } };
+  }
   const [infoResult, metricsResult] = await Promise.allSettled([
     execPalworldCli("info"),
     execPalworldCli("metrics"),
   ]);
+  const pausedDuringRequest = [infoResult, metricsResult].some((result) => result.status === "rejected" && result.reason instanceof PalworldPausedError);
 
   return {
-    paused,
+    paused: paused || pausedDuringRequest,
     info: infoResult.status === "fulfilled" ? infoResult.value as PalworldInfo : null,
     metrics: metricsResult.status === "fulfilled" ? metricsResult.value as PalworldMetrics : null,
     errors: {
-      info: infoResult.status === "rejected" ? "rest-cli info を取得できませんでした" : null,
-      metrics: metricsResult.status === "rejected" ? "rest-cli metrics を取得できませんでした" : null,
+      info: infoResult.status === "rejected" && !(infoResult.reason instanceof PalworldPausedError) ? "rest-cli info を取得できませんでした" : null,
+      metrics: metricsResult.status === "rejected" && !(metricsResult.reason instanceof PalworldPausedError) ? "rest-cli metrics を取得できませんでした" : null,
     },
   };
 }
@@ -500,9 +626,6 @@ export async function readPalworldOverview() {
 export async function setAutoPause(enabled: boolean) {
   // AUTO PAUSE の切替は許可した2コマンドだけを実行し、任意のサブコマンドを受け付けない。
   const command = enabled ? "continue" : "stop";
-  await execFileAsync("docker", ["exec", "-itu", "steam", containerName, "autopause", command], {
-    timeout: 10_000,
-    maxBuffer: 64 * 1024,
-  });
+  await runPalworldCommand(["autopause", command]);
   return { enabled };
 }

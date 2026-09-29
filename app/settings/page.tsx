@@ -8,7 +8,7 @@ type Setting = { key: string; value: string; defaultValue: string; overridden: b
 type Category = { category: string; values: Setting[] };
 type SettingGroup = { heading: string; collapsible: boolean; section?: number; settings: Setting[] };
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "/palui";
-const labels: Record<string, string> = { system: "システム", server: "サーバー", features: "ゲーム機能", balance: "ゲームバランス", performance: "パフォーマンス" };
+const labels: Record<string, string> = { compose: ".env 設定", system: "システム", server: "サーバー", features: "ゲーム機能", balance: "ゲームバランス", performance: "パフォーマンス" };
 const navItems = [{ label: "ダッシュボード", icon: LayoutDashboard, href: "/dashboard" }, { label: "プレイヤー", icon: Users, href: "/players" }, { label: "バックアップ", icon: Database, href: "/backups" }, { label: "設定", icon: Settings, href: "/settings", active: true }];
 
 function selectedValues(value: string) { return value.trim().replace(/^"|"$/g, "").replace(/^\(|\)$/g, "").split(",").map((item) => item.trim()).filter(Boolean); }
@@ -33,7 +33,7 @@ function sectionKey(category: string, group: SettingGroup, index: number) { retu
 export default function SettingsPage() {
   const [mobileNav, setMobileNav] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [activeCategory, setActiveCategory] = useState("system");
+  const [activeCategory, setActiveCategory] = useState("compose");
   const [hash, setHash] = useState("");
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
@@ -42,9 +42,13 @@ export default function SettingsPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    fetch(`${basePath}/api/settings`).then((response) => response.json()).then((data) => {
+    fetch(`${basePath}/api/settings`).then((response) => {
+      if (!response.ok) throw new Error("設定を読み込めませんでした");
+      return response.json();
+    }).then((data) => {
       const nextCategories: Category[] = data.categories ?? [];
       setCategories(nextCategories);
+      setActiveCategory((current) => nextCategories.some((category) => category.category === current) ? current : nextCategories[0]?.category ?? "");
       setExpandedSections(Object.fromEntries(nextCategories.flatMap((category) => groupSettings(category.values).map((group, index) => [sectionKey(category.category, group, index), group.collapsible && group.settings.some((setting) => !valuesEqual(setting, setting.value, setting.defaultValue))]))));
       setHash(data.hash ?? "");
       setNotice("設定は最新です");
@@ -61,7 +65,7 @@ export default function SettingsPage() {
 
   async function save() {
     setBusy(true);
-    const values = Object.fromEntries(categories.flatMap((category) => category.values).map((setting) => [setting.key, draft[setting.key] ?? setting.value]));
+    const values = Object.fromEntries(changed.map((setting) => [setting.key, draft[setting.key] ?? setting.value]));
     const response = await fetch(`${basePath}/api/settings`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ values, expectedHash: hash }) });
     const data = await response.json();
     if (response.ok) { setCategories(data.categories); setHash(data.hash); setDraft({}); setNotice("保存しました。再起動または再作成後に反映されます"); } else setNotice(data.error ?? "保存に失敗しました");
@@ -94,5 +98,5 @@ export default function SettingsPage() {
     });
   }
 
-  return <div className="app-shell"><aside className={`sidebar ${mobileNav ? "is-open" : ""}`}><div className="sidebar-header"><div className="brand-mark"><TerminalSquare size={19} /> PALUI</div><button className="icon-button mobile-close" onClick={() => setMobileNav(false)} aria-label="メニューを閉じる"><X size={18} /></button></div><div className="server-selector"><span className="signal-dot" /><div><small>MANAGED SERVER</small><strong>palworld-server</strong></div></div><nav className="main-nav" aria-label="メインナビゲーション"><p className="nav-label">OPERATIONS</p>{navItems.map(({ label, icon: Icon, href, active }) => <a href={`${basePath}${href}`} className={active ? "active" : ""} key={label}><Icon size={17} /> {label}{active && <span className="nav-pip" />}</a>)}</nav><SidebarFooter /></aside><main className="content-area"><header className="topbar"><button className="icon-button menu-trigger" onClick={() => setMobileNav(true)} aria-label="メニューを開く"><Menu size={20} /></button><div className="breadcrumbs"><span>OPERATIONS</span><b>/</b><strong>設定</strong></div><div className="topbar-meta"><span className="live-indicator"><i /> LIVE</span><span className="topbar-divider" /><span className="muted">17 Sep 2026, 14:32 JST</span></div></header><div className="page-content"><div className="page-heading"><div><p className="eyebrow">CONFIGURATION / 04</p><h1>設定</h1><p className="muted">コメント定義に基づく動的フォーム。変更値は override.env に集約します。</p></div><button className="primary-button" onClick={save} disabled={busy || changed.length === 0}><Save size={15} /> {busy ? "保存中..." : "変更を保存"}</button></div><div className={`notice-bar ${changed.length ? "notice-warning" : ""}`}><span className="notice-icon">{changed.length ? <FileCog size={14} /> : <Check size={14} />}</span><span>{notice}</span></div><section className="settings-layout panel"><div className="settings-tabs" role="tablist">{categories.map((category) => { const hasChanges = category.values.some((setting) => draft[setting.key] !== undefined && !valuesEqual(setting, draft[setting.key], setting.value)); return <button key={category.category} className={activeCategory === category.category ? "active" : ""} onClick={() => setActiveCategory(category.category)} role="tab">{labels[category.category] ?? category.category}{hasChanges && <span className="settings-tab-indicator" aria-label="未保存の変更あり" />}</button>; })}</div><div className="settings-form">{active && renderGroups(active.values)}</div></section><div className="settings-footer"><span><Check size={14} /> compose.yml は変更しません</span><span>override.env · {changed.length} 件の変更</span></div></div></main></div>;
+  return <div className="app-shell"><aside className={`sidebar ${mobileNav ? "is-open" : ""}`}><div className="sidebar-header"><div className="brand-mark"><TerminalSquare size={19} /> PALUI</div><button className="icon-button mobile-close" onClick={() => setMobileNav(false)} aria-label="メニューを閉じる"><X size={18} /></button></div><div className="server-selector"><span className="signal-dot" /><div><small>MANAGED SERVER</small><strong>palworld-server</strong></div></div><nav className="main-nav" aria-label="メインナビゲーション"><p className="nav-label">OPERATIONS</p>{navItems.map(({ label, icon: Icon, href, active }) => <a href={`${basePath}${href}`} className={active ? "active" : ""} key={label}><Icon size={17} /> {label}{active && <span className="nav-pip" />}</a>)}</nav><SidebarFooter /></aside><main className="content-area"><header className="topbar"><button className="icon-button menu-trigger" onClick={() => setMobileNav(true)} aria-label="メニューを開く"><Menu size={20} /></button><div className="breadcrumbs"><span>OPERATIONS</span><b>/</b><strong>設定</strong></div><div className="topbar-meta"><span className="live-indicator"><i /> LIVE</span><span className="topbar-divider" /><span className="muted">17 Sep 2026, 14:32 JST</span></div></header><div className="page-content"><div className="page-heading"><div><p className="eyebrow">CONFIGURATION / 04</p><h1>設定</h1><p className="muted">Compose 設定は .env、それ以外は override.env に保存します。</p></div><button className="primary-button" onClick={save} disabled={busy || changed.length === 0}><Save size={15} /> {busy ? "保存中..." : "変更を保存"}</button></div><div className={`notice-bar ${changed.length ? "notice-warning" : ""}`}><span className="notice-icon">{changed.length ? <FileCog size={14} /> : <Check size={14} />}</span><span>{notice}</span></div><section className="settings-layout panel"><div className="settings-tabs" role="tablist">{categories.map((category) => { const hasChanges = category.values.some((setting) => draft[setting.key] !== undefined && !valuesEqual(setting, draft[setting.key], setting.value)); return <button key={category.category} className={activeCategory === category.category ? "active" : ""} onClick={() => setActiveCategory(category.category)} role="tab">{labels[category.category] ?? category.category}{hasChanges && <span className="settings-tab-indicator" aria-label="未保存の変更あり" />}</button>; })}</div><div className="settings-form">{active && renderGroups(active.values)}</div></section><div className="settings-footer"><span><Check size={14} /> compose.yml は変更しません</span><span>{changed.length} 件の未保存変更</span></div></div></main></div>;
 }

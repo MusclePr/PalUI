@@ -32,3 +32,9 @@
     #|MOD有効|BOOL|Modを有効にします
     MOD_ENABLED=True
     ```
+
+## ターゲット
+
+- デフォルト値から編集した結果は次のファイルに書き込まれます。
+  - defaults/compose.env --> .env
+  - defaults/*.env --> override.env

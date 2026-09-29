@@ -208,7 +208,18 @@ function FetchNotWhitelist() {
 }
 
 function RCON() {
-  docker compose exec -u steam pal autopause resume
+  local server_dir
+  server_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -e "${server_dir}/palworld/.paused" ]; then
+    if ! docker compose exec -u steam pal autopause resume; then
+      echo "AUTO PAUSEから復帰できないためRCONを実行しません" >&2
+      return 75
+    fi
+    if [ -e "${server_dir}/palworld/.paused" ]; then
+      echo "AUTO PAUSE状態が解除されていないためRCONを実行しません" >&2
+      return 75
+    fi
+  fi
   docker compose exec -u steam pal rcon-cli -T 1s "$@"
 }
 

@@ -18,7 +18,7 @@ async function waitForFile(path, timeoutMs = 3000) {
   return false;
 }
 
-test("SSE strips ANSI, keeps timestamps, and stops the child process on disconnect", async () => {
+test("SSE preserves ANSI colors and timestamps, and stops the child process on disconnect", async () => {
   const directory = await mkdtemp(join(tmpdir(), "palui-log-stream-"));
   const scriptPath = join(directory, "fake-docker");
   const stoppedPath = join(directory, "stopped");
@@ -29,7 +29,7 @@ test("SSE strips ANSI, keeps timestamps, and stops the child process on disconne
   try {
     await writeFile(scriptPath, `#!/bin/sh
 trap 'printf stopped > "$PALUI_LOG_TEST_MARKER"; exit 0' TERM
-  printf '\\033[31m2026-09-29T12:00:00Z\\033[0m ready\\nplain line without timestamp\\n'
+  printf '2026-09-29T12:00:00Z \\033[31mready\\033[0m\\nplain line without timestamp\\n'
 while :; do sleep 1 & wait $!; done
 `);
     await chmod(scriptPath, 0o755);
@@ -46,9 +46,8 @@ while :; do sleep 1 & wait $!; done
       eventText += new TextDecoder().decode(next.value);
     }
     assert.match(eventText, /event: log/);
-    assert.doesNotMatch(eventText, /\u001B/);
     const payloads = [...eventText.matchAll(/data: (.+)\n/g)].map((match) => JSON.parse(match[1]));
-    assert.equal(payloads[0].line, "ready");
+    assert.equal(payloads[0].line, "\u001B[31mready\u001B[0m");
     assert.equal(payloads[0].timestamp, "2026-09-29T12:00:00.000Z");
     assert.equal(payloads[1].line, "plain line without timestamp");
     assert.equal(payloads[1].timestamp, null);

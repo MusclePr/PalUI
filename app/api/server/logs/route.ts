@@ -15,6 +15,6 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "対象サービスが不正です" }, { status: 400 });
   }
 
-  const command = composeCommand(["logs", "--follow", "--tail", "100", "--timestamps", "--no-color", "--no-log-prefix", service]);
+  const command = composeCommand(["logs", "--follow", "--tail", "100", "--timestamps", "--no-log-prefix", service]);
   return createLogStreamResponse(request, command);
 }

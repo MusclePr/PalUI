@@ -1,5 +1,3 @@
 #!/bin/bash
 
-./palui/build.sh && \
-    [ "$1" = "push" ] && \
-        ./palui/push.sh
+./palui/build.sh && ./palui/push.sh

@@ -58,6 +58,7 @@ export default function DashboardPage() {
   const [noticeWarning, setNoticeWarning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshRequest, setRefreshRequest] = useState(0);
+  const [lifecycleReconnectRequest, setLifecycleReconnectRequest] = useState(0);
   const [mobileNav, setMobileNav] = useState(false);
   const [pendingAction, setPendingAction] = useState<LifecycleAction | null>(null);
   const [confirmAction, setConfirmAction] = useState<"stop" | "restart" | null>(null);
@@ -149,6 +150,7 @@ export default function DashboardPage() {
   async function runAction(action: LifecycleAction) {
     const labels: Record<LifecycleAction, string> = { start: "起動", stop: "停止", restart: "再起動" };
     setPendingAction(action);
+    setConfirmAction(null);
     setNotice(`${labels[action]}を実行しています...`);
     setNoticeWarning(true);
     try {
@@ -166,8 +168,8 @@ export default function DashboardPage() {
       setNoticeWarning(true);
     } finally {
       setPendingAction(null);
-      setConfirmAction(null);
       setRefreshRequest((current) => current + 1);
+      setLifecycleReconnectRequest((current) => current + 1);
     }
   }
 
@@ -240,7 +242,7 @@ export default function DashboardPage() {
           </section>
           {confirmAction && <div className="dialog-backdrop" onClick={() => setConfirmAction(null)}><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="lifecycle-confirm-title" onClick={(event) => event.stopPropagation()}><div className="dialog-icon"><AlertTriangle size={20} /></div><p className="eyebrow">COMPOSE / ALL SERVICES</p><h2 id="lifecycle-confirm-title">{confirmAction === "stop" ? "Compose全体を停止" : "Compose全体を再起動"}</h2><p className="muted">{confirmAction === "stop" ? "pal、proxy、mapのコンテナを停止し、Composeネットワークを削除します。" : "pal、proxy、mapをdownしてからup -dで起動します。環境変数も再読み込みされます。"}</p><div className="dialog-actions"><button type="button" className="secondary-button" onClick={() => setConfirmAction(null)}>キャンセル</button><button type="button" className="primary-button destructive-button" disabled={pendingAction !== null || autoPauseBusy} onClick={() => void runAction(confirmAction)}>{confirmAction === "stop" ? "停止する" : "再起動する"}</button></div></section></div>}
         </div>
-        <LiveLogDock />
+        <LiveLogDock lifecycleReconnectRequest={lifecycleReconnectRequest} />
       </main>
     </div>
   );

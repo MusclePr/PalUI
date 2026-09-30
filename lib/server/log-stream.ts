@@ -3,12 +3,8 @@ import { StringDecoder } from "node:string_decoder";
 
 export type LogCommand = { command: string; args: readonly string[]; cwd: string };
 
-function stripAnsi(value: string) {
-  return value.replace(/\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\)|[@-_])/g, "");
-}
-
 function parseLogLine(value: string) {
-  const line = stripAnsi(value);
+  const line = value;
   const match = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s(.*)$/);
   if (!match) return { line, timestamp: null };
 

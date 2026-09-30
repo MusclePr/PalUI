@@ -1,15 +1,18 @@
-import { mkdir, open, readFile, readdir, rename, stat, statfs, unlink, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, open, readFile, readdir, rename, rm, stat, statfs, unlink, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { dirname, join, posix } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { parse as parseDotenv } from "dotenv";
-import { isPalworldPaused, PalworldPausedError, resumePalworldIfPaused, runPalworldCommand, runPalworldRconCommand } from "./compose";
+import * as tar from "tar";
+import { isPalworldPaused, PalworldPausedError, readComposeServiceSnapshot, resumePalworldIfPaused, runCompose, runPalworldBackupCommand, runPalworldCommand, runPalworldRconCommand, withComposeOperation } from "./compose";
 
 const execFileAsync = promisify(execFile);
 const whitelistFile = "/server/palworld/Pal/Binaries/Win64/PalDefender/WhiteList.json";
-const backupDirectory = "/server/palworld/backups";
 const settingsRoot = process.env.PALUI_SERVER_DIR ?? (existsSync("/server") ? "/server" : `${process.cwd()}/palui/server`);
+const palworldDirectory = `${settingsRoot}/palworld`;
+const backupDirectory = `${palworldDirectory}/backups`;
 const registeredPlayersFile = `${settingsRoot}/players.json`;
 const settingsFiles = {
   compose: { defaults: "defaults/compose.env", target: ".env" },
@@ -86,6 +89,12 @@ export type AddRegisteredPlayerInput = {
 };
 
 export class PlayerStoreError extends Error {
+  constructor(message: string, public status: number) {
+    super(message);
+  }
+}
+
+export class BackupError extends Error {
   constructor(message: string, public status: number) {
     super(message);
   }
@@ -357,8 +366,10 @@ export async function listBackups() {
   try {
     const entries = await readdir(backupDirectory, { withFileTypes: true });
     const backups = await Promise.all(entries.filter((entry) => entry.isFile() && entry.name.endsWith(".tar.gz")).map(async (entry) => {
-      const file = await stat(`${backupDirectory}/${entry.name}`);
-      return { name: entry.name, createdAt: file.mtime.toISOString(), size: `${(file.size / (1024 ** 3)).toFixed(2)} GB`, sizeBytes: file.size, integrity: "検証済み" as const, source: "server" as const };
+      const archivePath = join(backupDirectory, entry.name);
+      const file = await lstat(archivePath);
+      const integrity = file.isFile() && await isValidBackupArchive(archivePath) ? "検証済み" as const : "破損" as const;
+      return { name: entry.name, createdAt: file.mtime.toISOString(), size: `${(file.size / (1024 ** 2)).toFixed(2)} MiB`, sizeBytes: file.size, integrity, source: "server" as const };
     }));
     return backups.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   } catch {
@@ -368,7 +379,7 @@ export async function listBackups() {
 
 export async function readStorageUsage() {
   try {
-    const filesystem = await statfs("/server/palworld");
+    const filesystem = await statfs(palworldDirectory);
     const totalBytes = Number(filesystem.blocks) * Number(filesystem.bsize);
     const freeBytes = Number(filesystem.bavail) * Number(filesystem.bsize);
     const backups = await listBackups();
@@ -382,11 +393,11 @@ export async function readStorageUsage() {
     };
   } catch {
     return {
-      totalBytes: 100 * 1024 ** 3,
-      freeBytes: 63.24 * 1024 ** 3,
-      backupBytes: 5.36 * 1024 ** 3,
-      systemBytes: 31.4 * 1024 ** 3,
-      source: "fixture" as const,
+      totalBytes: 0,
+      freeBytes: 0,
+      backupBytes: 0,
+      systemBytes: 0,
+      source: "unavailable" as const,
     };
   }
 }
@@ -397,21 +408,266 @@ export async function savePalworldWorld() {
 }
 
 export async function createBackup() {
-  await savePalworldWorld();
-  await execContainerCommand("backup");
-  return { created: true, backups: await listBackups() };
+  return withComposeOperation(async () => {
+    const [snapshot, autoPaused] = await Promise.all([readComposeServiceSnapshot("pal"), isPalworldPaused()]);
+    await runPalworldBackupCommand(snapshot.state, autoPaused);
+    return { created: true, backups: await listBackups() };
+  });
 }
 
-export async function restoreBackup(name: string) {
-  if (!/^[a-zA-Z0-9._-]+\.tar\.gz$/.test(name)) throw new Error("不正なバックアップ名です");
-  await execContainerCommand("restore", name);
-  return { restored: true, name, requiresManualStart: true };
+function validateBackupEntry(entryPath: string, entryType: string) {
+  const normalizedPath = posix.normalize(entryPath.replace(/\/$/, ""));
+  if (entryPath.includes("\\") || posix.isAbsolute(entryPath) || entryPath.split("/").includes("..") || normalizedPath === ".." || normalizedPath.startsWith("../")) {
+    throw new Error("バックアップに安全でないパスが含まれています");
+  }
+  if (normalizedPath !== "Saved" && !normalizedPath.startsWith("Saved/")) {
+    throw new Error("バックアップにSaved以外のデータが含まれています");
+  }
+  if (entryType !== "File" && entryType !== "Directory") {
+    throw new Error("リンクまたは特殊ファイルを含むバックアップは復元できません");
+  }
+  if (normalizedPath === "Saved" && entryType !== "Directory") {
+    throw new Error("バックアップのSavedディレクトリが不正です");
+  }
+}
+
+async function inspectBackupArchive(archivePath: string) {
+  let savedFileCount = 0;
+  let validationError: Error | null = null;
+  await tar.t({
+    file: archivePath,
+    strict: true,
+    onReadEntry(entry) {
+      try {
+        validateBackupEntry(entry.path, entry.type);
+        if (entry.type === "File") savedFileCount += 1;
+      } catch (error) {
+        validationError = error instanceof Error ? error : new Error("バックアップの内容が不正です");
+      }
+    },
+  });
+  if (validationError) throw validationError;
+  if (savedFileCount === 0) throw new Error("バックアップにSavedデータがありません");
+}
+
+async function isValidBackupArchive(archivePath: string) {
+  try {
+    await inspectBackupArchive(archivePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function findBackupDirectories(directory: string, relativePath = ""): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const found: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const childPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+    if (entry.name === "backup") found.push(childPath);
+    else found.push(...await findBackupDirectories(join(directory, entry.name), childPath));
+  }
+  return found;
+}
+
+async function restoreSavedData(archivePath: string) {
+  await inspectBackupArchive(archivePath);
+
+  const restoreWorkspace = join(palworldDirectory, `.palui-restore-${randomUUID()}`);
+  const stagedSavedDirectory = join(restoreWorkspace, "Saved");
+  const currentSavedDirectory = join(palworldDirectory, "Pal", "Saved");
+  const recoveryDirectory = join(backupDirectory, `restore-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID()}`);
+  let hadCurrentSaved = false;
+  let recoveryCreated = false;
+  let replacementStarted = false;
+
+  await mkdir(restoreWorkspace, { recursive: true });
+  try {
+    await tar.x({
+      file: archivePath,
+      cwd: restoreWorkspace,
+      strict: true,
+      preservePaths: false,
+      filter(entryPath, entry) {
+        if (!("type" in entry)) return false;
+        try {
+          validateBackupEntry(entryPath, entry.type);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    });
+
+    const stagedInfo = await lstat(stagedSavedDirectory);
+    if (!stagedInfo.isDirectory()) throw new Error("展開したSavedデータがディレクトリではありません");
+
+    let currentInfo;
+    try {
+      currentInfo = await lstat(currentSavedDirectory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (currentInfo) {
+      if (!currentInfo.isDirectory()) throw new Error("現在のSavedデータがディレクトリではありません");
+      hadCurrentSaved = true;
+      await mkdir(backupDirectory, { recursive: true });
+      await cp(currentSavedDirectory, recoveryDirectory, { recursive: true, errorOnExist: true, force: false });
+      recoveryCreated = true;
+
+      for (const backupRelativePath of await findBackupDirectories(currentSavedDirectory)) {
+        const stagedBackupDirectory = join(stagedSavedDirectory, ...backupRelativePath.split("/"));
+        await rm(stagedBackupDirectory, { recursive: true, force: true });
+        await mkdir(dirname(stagedBackupDirectory), { recursive: true });
+        await cp(join(currentSavedDirectory, ...backupRelativePath.split("/")), stagedBackupDirectory, { recursive: true });
+      }
+    }
+
+    await mkdir(dirname(currentSavedDirectory), { recursive: true });
+    replacementStarted = true;
+    await rm(currentSavedDirectory, { recursive: true, force: true });
+    await rename(stagedSavedDirectory, currentSavedDirectory);
+    if (recoveryCreated) await rm(recoveryDirectory, { recursive: true, force: true }).catch(() => undefined);
+  } catch (error) {
+    try {
+      if (replacementStarted) {
+        await rm(currentSavedDirectory, { recursive: true, force: true });
+        if (hadCurrentSaved) await cp(recoveryDirectory, currentSavedDirectory, { recursive: true });
+      }
+    } catch {
+      throw new Error(`復元に失敗し、元のセーブを自動復旧できませんでした。退避先: ${recoveryDirectory}`);
+    } finally {
+      if (!recoveryCreated) await rm(recoveryDirectory, { recursive: true, force: true }).catch(() => undefined);
+    }
+    throw error;
+  } finally {
+    await rm(restoreWorkspace, { recursive: true, force: true });
+  }
+}
+
+async function assertRestoreOwnership() {
+  let composeEnvironment: Record<string, string> = {};
+  try {
+    composeEnvironment = parseDotenv(await readFile(`${settingsRoot}/.env`, "utf8"));
+  } catch {
+    // Compose defaults to uid/gid 1000 unless inherited values override them.
+  }
+  const expectedUid = Number(composeEnvironment.PUID ?? process.env.PUID ?? 1000);
+  const expectedGid = Number(composeEnvironment.PGID ?? process.env.PGID ?? 1000);
+  if ((typeof process.getuid === "function" && process.getuid() !== expectedUid)
+    || (typeof process.getgid === "function" && process.getgid() !== expectedGid)) {
+    throw new BackupError("PALUIとPalworldのPUID/PGIDが一致しないため復元できません", 409);
+  }
+}
+
+type RestoreProgress = (message: string) => void;
+
+function reportComposeOutput(label: string, result: { stdout: string; stderr: string }, onProgress?: RestoreProgress) {
+  if (result.stdout.trim()) onProgress?.(`${label} stdout:\n${result.stdout.trim().slice(-8000)}`);
+  if (result.stderr.trim()) onProgress?.(`${label} stderr:\n${result.stderr.trim().slice(-8000)}`);
+}
+
+function describeComposeError(error: unknown) {
+  if (!error || typeof error !== "object") return String(error);
+  const processError = error as { message?: unknown; stdout?: unknown; stderr?: unknown };
+  return [processError.stderr, processError.stdout, processError.message]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join("\n")
+    .slice(-8000);
+}
+
+export async function restoreBackup(name: string, startAfterRestore = false, onProgress?: RestoreProgress) {
+  if (!/^[a-zA-Z0-9._-]+\.tar\.gz$/.test(name)) throw new BackupError("不正なバックアップ名です", 400);
+  return withComposeOperation(async () => {
+    const archivePath = join(backupDirectory, name);
+    onProgress?.("バックアップファイルを検証しています");
+    let archiveInfo;
+    try {
+      archiveInfo = await lstat(archivePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new BackupError("バックアップファイルが見つかりません", 404);
+      throw error;
+    }
+    if (!archiveInfo.isFile()) throw new BackupError("バックアップファイルが見つかりません", 404);
+    try {
+      await inspectBackupArchive(archivePath);
+    } catch {
+      throw new BackupError("アーカイブが破損しているか、安全な復元形式ではありません", 422);
+    }
+    onProgress?.("バックアップファイルの検証が完了しました");
+    await assertRestoreOwnership();
+    onProgress?.("Compose停止を実行しています: docker compose down");
+    try {
+      const result = await runCompose(["down"], 120_000);
+      reportComposeOutput("docker compose down", result, onProgress);
+      onProgress?.("Compose停止コマンドが完了しました");
+    } catch (error) {
+      onProgress?.(`Compose停止コマンドでエラーが発生しました:\n${describeComposeError(error)}`);
+      throw error;
+    }
+    const stoppedSnapshot = await readComposeServiceSnapshot("pal");
+    if (stoppedSnapshot.state === "running" || stoppedSnapshot.state === "starting") {
+      throw new Error("サーバー停止を確認できないため、復元を中止しました");
+    }
+
+    onProgress?.("Palworld停止を確認しました。Savedデータを展開・置換しています");
+    try {
+      await restoreSavedData(archivePath);
+      onProgress?.("Savedデータの復元が完了しました");
+    } catch (error) {
+      onProgress?.(`Savedデータの復元でエラーが発生しました: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+    let started = false;
+    let startError: string | null = null;
+    if (startAfterRestore) {
+      const startupStartedAt = new Date().toISOString();
+      onProgress?.("Compose起動を実行しています: docker compose up -d");
+      try {
+        const result = await runCompose(["up", "-d"], 120_000);
+        reportComposeOutput("docker compose up -d", result, onProgress);
+        started = true;
+        onProgress?.("Compose起動コマンドが完了しました");
+      } catch (error) {
+        onProgress?.(`Compose起動コマンドでエラーが発生しました:\n${describeComposeError(error)}`);
+        const snapshot = await readComposeServiceSnapshot("pal").catch(() => null);
+        if (snapshot && (snapshot.state === "running" || snapshot.state === "starting")) {
+          started = true;
+          startError = `Composeの起動処理は一部でエラーになりましたが、Palworldコンテナは${snapshot.state === "running" ? "起動しています" : "起動処理中です"}`;
+          onProgress?.(`起動後の状態確認: Palworldコンテナは${snapshot.state === "running" ? "起動しています" : "起動処理中です"}`);
+        } else {
+          startError = "復元は完了しましたが、Composeを起動できませんでした";
+          onProgress?.("起動後の状態確認: Palworldコンテナは起動していません");
+        }
+      }
+      if (started) {
+        try {
+          onProgress?.("今回の起動以降のPalworldログを取得しています");
+          const logs = await runCompose(["logs", "--no-color", "--since", startupStartedAt, "--tail", "100", "pal"], 15_000);
+          reportComposeOutput("Palworld直近100行", logs, onProgress);
+        } catch (error) {
+          onProgress?.(`Palworldログを取得できませんでした: ${describeComposeError(error)}`);
+        }
+      }
+    } else {
+      onProgress?.("Compose起動は選択されていません。サーバーを停止状態のままにします");
+    }
+    return { restored: true, name, started, requiresManualStart: !started, startError };
+  });
 }
 
 export async function deleteBackup(name: string) {
-  if (!/^[a-zA-Z0-9._-]+\.tar\.gz$/.test(name)) throw new Error("不正なバックアップ名です");
-  await unlink(`${backupDirectory}/${name}`);
-  return { deleted: true, name };
+  if (!/^[a-zA-Z0-9._-]+\.tar\.gz$/.test(name)) throw new BackupError("不正なバックアップ名です", 400);
+  return withComposeOperation(async () => {
+    try {
+      await unlink(join(backupDirectory, name));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new BackupError("バックアップファイルが見つかりません", 404);
+      throw error;
+    }
+    return { deleted: true, name };
+  });
 }
 
 type SettingType = "BOOL" | "INT" | "FLOAT" | "STR" | "PASSWORD" | "ARRAY" | "CHOICE" | "SELECT";

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { composeCommand, hasPalworldReadyMarker, isComposeService, parseComposeStats, runComposeLifecycle } from "../../lib/server/compose.ts";
+import { composeCommand, hasPalworldReadyMarker, isComposeService, palworldBackupComposeArgs, parseComposeStats, runComposeLifecycle, runPalworldBackupCommand } from "../../lib/server/compose.ts";
 
 test("Compose commands use the configured project directory and file", () => {
   const command = composeCommand(["ps"]);
@@ -24,6 +24,20 @@ test("Pal readiness requires the REST API started log marker", () => {
   assert.equal(hasPalworldReadyMarker("[07:41:41][info] REST API started on port 8212"), true);
   assert.equal(hasPalworldReadyMarker("[07:41:40][info] Palworld server is starting"), false);
   assert.equal(hasPalworldReadyMarker("REST API started on port 8212"), true);
+});
+
+test("Pal backups use exec when ready or AUTO PAUSE is active, and run otherwise", async () => {
+  const commands = [];
+  const execute = async (args) => {
+    commands.push([...args]);
+    return { stdout: "", stderr: "" };
+  };
+
+  assert.deepEqual(palworldBackupComposeArgs("running", false), ["exec", "-T", "-u", "steam", "pal", "backup"]);
+  assert.deepEqual(palworldBackupComposeArgs("starting", true), ["exec", "-T", "-u", "steam", "pal", "backup"]);
+  assert.deepEqual(palworldBackupComposeArgs("stopped", false), ["run", "--rm", "-u", "steam", "pal", "backup"]);
+  await runPalworldBackupCommand("stopped", false, execute);
+  assert.deepEqual(commands, [["run", "--rm", "-u", "steam", "pal", "backup"]]);
 });
 
 test("Compose stats are parsed without inventing values", () => {

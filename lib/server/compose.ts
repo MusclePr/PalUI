@@ -87,6 +87,17 @@ export async function runPalworldCommand(args: readonly string[], timeoutMs = 10
   return execute(["exec", "-T", "-u", "steam", "pal", ...args], timeoutMs);
 }
 
+export function palworldBackupComposeArgs(state: ComposeServiceState, autoPaused: boolean) {
+  if (state === "running" || (state === "starting" && autoPaused)) {
+    return ["exec", "-T", "-u", "steam", "pal", "backup"];
+  }
+  return ["run", "--rm", "-u", "steam", "pal", "backup"];
+}
+
+export async function runPalworldBackupCommand(state: ComposeServiceState, autoPaused: boolean, execute: ComposeExecutor = runCompose) {
+  return execute(palworldBackupComposeArgs(state, autoPaused), 60_000);
+}
+
 export async function resumePalworldIfPaused(execute: ComposeExecutor = runCompose) {
   if (!await isPalworldPaused()) return false;
 
@@ -251,10 +262,7 @@ export async function readComposeServiceSnapshot(service: ComposeService): Promi
 type ComposeExecutor = (args: readonly string[], timeoutMs?: number) => Promise<{ stdout: string; stderr: string }>;
 
 export async function runComposeLifecycle(action: ComposeLifecycleAction, execute: ComposeExecutor = runCompose) {
-  if (activeLifecycleOperations.has(composeDirectory)) throw new ComposeOperationInProgressError();
-
-  activeLifecycleOperations.add(composeDirectory);
-  try {
+  return withComposeOperation(async () => {
     switch (action) {
       case "start":
         await execute(["up", "-d"]);
@@ -268,6 +276,15 @@ export async function runComposeLifecycle(action: ComposeLifecycleAction, execut
         break;
     }
     return { action, completed: true };
+  });
+}
+
+export async function withComposeOperation<T>(operation: () => Promise<T>) {
+  if (activeLifecycleOperations.has(composeDirectory)) throw new ComposeOperationInProgressError();
+
+  activeLifecycleOperations.add(composeDirectory);
+  try {
+    return await operation();
   } finally {
     activeLifecycleOperations.delete(composeDirectory);
   }

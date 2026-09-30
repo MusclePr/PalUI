@@ -103,17 +103,33 @@ function parseId(name, fallback) {
   return Number(value);
 }
 
+function getProjectName() {
+  const name = process.env.COMPOSE_PROJECT_NAME || `${process.env.PROJECT || 'dev'}_pal`;
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(name)) {
+    throw new Error(`Invalid Compose project name: ${name}`);
+  }
+  return name;
+}
+
 function renderCompose(templatePath, destination, hostServerDir, uid, gid) {
   const template = fs.readFileSync(templatePath, 'utf8');
   const placeholder = '__HOST_SERVER_DIR__';
   if (!template.includes(placeholder)) {
     throw new Error(`Compose template does not contain ${placeholder}`);
   }
+  const projectPlaceholder = '__PROJECT_PAL__';
+  if (!template.includes(projectPlaceholder)) {
+    throw new Error(`Compose template does not contain ${projectPlaceholder}`);
+  }
 
   const composeSource = `${hostServerDir.replaceAll('$', '$$')}/palworld`;
-  const rendered = template.replaceAll(placeholder, JSON.stringify(composeSource));
-  if (rendered.includes(placeholder)) {
-    throw new Error(`Compose template still contains ${placeholder} after rendering`);
+  const rendered = template
+    .replaceAll(placeholder, JSON.stringify(composeSource))
+    .replaceAll(projectPlaceholder, JSON.stringify(getProjectName()));
+  for (const remainingPlaceholder of [placeholder, projectPlaceholder]) {
+    if (rendered.includes(remainingPlaceholder)) {
+      throw new Error(`Compose template still contains ${remainingPlaceholder} after rendering`);
+    }
   }
 
   const composePath = path.join(destination, 'compose.yml');

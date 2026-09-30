@@ -132,7 +132,7 @@ Compose コマンドを組み立てる際、利用者入力をシェル文字列
 
 #### DooD 注意点
 
-コンテナ内からの Docker 操作は `/var/run/docker.sock` を通じてホスト上で実行される。そのため、Palworld Compose の bind mount にはホストから見える絶対パスが必要となる。entrypoint は `/server` の mount 情報からこのパスを取得し、`template.compose.yml` の `__HOST_SERVER_DIR__` を置換して `compose.yml` を生成する。値は PalUI の環境変数としては公開しない。`/server` の mount またはテンプレートを利用できず Compose を生成できない場合、誤ったパスで起動しないよう PalUI の起動を中断する。
+コンテナ内からの Docker 操作は `/var/run/docker.sock` を通じてホスト上で実行される。そのため、Palworld Compose の bind mount にはホストから見える絶対パスが必要となる。entrypoint は `/server` の mount 情報からこのパスを取得し、`template.compose.yml` の `__HOST_SERVER_DIR__` を置換して `compose.yml` を生成する。トップレベルの `name` には親 Compose の `COMPOSE_PROJECT_NAME` を埋め込み、親名に追従させる。単独起動では `PROJECT` に `_pal` を付け、未指定なら `dev_pal` を使う。ホストから生成済みComposeを直接操作する場合も同じプロジェクト名となる。テンプレート変更を既存環境へ適用するときは `palui/template_update.sh` を実行してから再起動する。このスクリプトはComposeテンプレートを更新し、ユーザー設定ファイルは既存どおり更新日時に基づいて扱う。ホスト側のパスは PalUI の環境変数としては公開しない。`/server` の mount またはテンプレートを利用できず Compose を生成できない場合、誤ったパスで起動しないよう PalUI の起動を中断する。
 
 ## 5. 機能要件
 

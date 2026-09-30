@@ -1,4 +1,5 @@
 ---
+name: __PROJECT_PAL__
 services:
   pal:
     image: thijsvanloef/palworld-server-docker:wine

@@ -44,6 +44,7 @@ export type PalworldMetrics = {
 
 export type PalworldPlayer = {
   name: string;
+  accountName: string;
   playerId: string;
   userId: string;
   ip: string;
@@ -55,7 +56,7 @@ export type PalworldPlayer = {
 };
 
 export type RegisteredPlayer = {
-  id: string;
+  userId: string;
   displayName: string;
   role: string;
   white: boolean;
@@ -66,13 +67,13 @@ export type RegisteredPlayer = {
 };
 
 export type DetectedPlayer = {
-  id: string;
+  userId: string;
   displayName: string;
   lastLogin: string | null;
 };
 
 export type DetectedRegistrationResult = {
-  playerId: string;
+  userId: string;
   ok: boolean;
   reason?: string;
 };
@@ -82,7 +83,7 @@ export const detectedIdPattern = /^[a-z0-9]+_[0-9]+$/;
 export const forbiddenNameChars = /["'\\`$&|;<>]/;
 
 export type AddRegisteredPlayerInput = {
-  playerId: string;
+  userId: string;
   displayName: string;
   enabled: boolean;
   role?: string;
@@ -127,7 +128,8 @@ function normalizePlayers(value: unknown): PalworldPlayer[] {
   return source.map((player) => {
     const item = player as Record<string, unknown>;
     return {
-      name: String(item.name ?? item.accountName ?? "Unknown player"),
+      name: String(item.name ?? "Unknown player"),
+      accountName: String(item.accountName ?? ""),
       playerId: String(item.playerId ?? item.player_id ?? ""),
       userId: String(item.userId ?? item.user_id ?? ""),
       ip: String(item.ip ?? ""),
@@ -140,17 +142,17 @@ function normalizePlayers(value: unknown): PalworldPlayer[] {
   }).filter((player) => player.playerId.length > 0);
 }
 
-function assertPlayerId(playerId: string) {
-  if (!/^[-_a-zA-Z0-9:.]+$/.test(playerId)) throw new PlayerStoreError("不正なプレイヤー ID です", 400);
+function assertUserId(userId: string) {
+  if (!/^[-_a-zA-Z0-9:.]+$/.test(userId)) throw new PlayerStoreError("不正なユーザー ID です", 400);
 }
 
 function normalizeRegisteredPlayers(value: unknown): RegisteredPlayer[] {
   if (!Array.isArray(value)) return [];
   return value.map((player) => {
     const item = player as Record<string, unknown>;
-    const id = String(item.id ?? item.playerId ?? "").trim();
+    const userId = String(item.userId ?? "").trim();
     return {
-      id,
+      userId,
       displayName: String(item.displayName ?? item.name ?? "").trim(),
       role: String(item.role ?? "メンバー").trim() || "メンバー",
       white: item.white === true,
@@ -159,7 +161,7 @@ function normalizeRegisteredPlayers(value: unknown): RegisteredPlayer[] {
       lastLogin: typeof item.lastLogin === "string" ? item.lastLogin : null,
       firstLogin: typeof item.firstLogin === "string" ? item.firstLogin : null,
     };
-  }).filter((player) => player.id.length > 0);
+  }).filter((player) => player.userId.length > 0);
 }
 
 async function readRegisteredPlayers() {
@@ -186,21 +188,21 @@ async function readWhitelist(): Promise<string[]> {
   }
 }
 
-async function writeWhitelist(playerIds: string[]) {
+async function writeWhitelist(userIds: string[]) {
   const temporaryFile = `${whitelistFile}.tmp-${process.pid}`;
   await mkdir(whitelistFile.slice(0, whitelistFile.lastIndexOf("/")), { recursive: true });
-  await writeFile(temporaryFile, `${JSON.stringify([...new Set(playerIds)], null, 4)}\n`, "utf8");
+  await writeFile(temporaryFile, `${JSON.stringify([...new Set(userIds)], null, 4)}\n`, "utf8");
   await rename(temporaryFile, whitelistFile);
 }
 
-async function execWhitelist(command: "whitelist_add" | "whitelist_remove", playerId: string) {
-  await runPalworldRconCommand([`${command} ${playerId}`], 5_000);
+async function execWhitelist(command: "whitelist_add" | "whitelist_remove", userId: string) {
+  await runPalworldRconCommand([`${command} ${userId}`], 5_000);
 }
 
-async function updateRegisteredPlayerWhite(playerId: string, enabled: boolean) {
+async function updateRegisteredPlayerWhite(userId: string, enabled: boolean) {
   const players = await readRegisteredPlayers();
-  if (!players.some((player) => player.id === playerId)) return;
-  await writeRegisteredPlayers(players.map((player) => player.id === playerId ? { ...player, white: enabled } : player));
+  if (!players.some((player) => player.userId === userId)) return;
+  await writeRegisteredPlayers(players.map((player) => player.userId === userId ? { ...player, white: enabled } : player));
 }
 
 export async function readPlayers() {
@@ -222,25 +224,25 @@ export async function readPlayers() {
   return { onlinePlayers, registeredPlayers, whitelist, cachedAt: onlinePlayersCache?.updatedAt ?? null, paused, source };
 }
 
-export async function updateWhitelist(playerId: string, enabled: boolean) {
-  assertPlayerId(playerId);
+export async function updateWhitelist(userId: string, enabled: boolean) {
+  assertUserId(userId);
   try {
     await resumePalworldIfPaused();
   } catch {
     throw new PlayerStoreError("AUTO PAUSEから復帰できないためRCONを実行できません", 503);
   }
   const whitelist = await readWhitelist();
-  const next = enabled ? [...whitelist, playerId] : whitelist.filter((id) => id !== playerId);
-  await updateRegisteredPlayerWhite(playerId, enabled);
+  const next = enabled ? [...whitelist, userId] : whitelist.filter((id) => id !== userId);
+  await updateRegisteredPlayerWhite(userId, enabled);
   try {
-    await execWhitelist(enabled ? "whitelist_add" : "whitelist_remove", playerId);
+    await execWhitelist(enabled ? "whitelist_add" : "whitelist_remove", userId);
   } catch (error) {
     if (error instanceof PalworldPausedError) throw new PlayerStoreError(error.message, 409);
     if (await isPalworldPaused()) throw new PlayerStoreError("AUTO PAUSEから復帰できなかったためRCONを実行できません", 503);
     // RCON を受け付けない状態では、仕様で定めたファイルを直接更新する。
-    try { await writeWhitelist(next); } catch { return { playerId, enabled, whitelist: next }; }
+    try { await writeWhitelist(next); } catch { return { userId, enabled, whitelist: next }; }
   }
-  return { playerId, enabled, whitelist: await readWhitelist() };
+  return { userId, enabled, whitelist: await readWhitelist() };
 }
 
 async function execWhitelistScript(args: string[]) {
@@ -276,51 +278,51 @@ export async function detectUnregisteredPlayers(): Promise<DetectedPlayer[]> {
   if (!Array.isArray(value)) throw new PlayerStoreError("未登録プレイヤー情報を解析できませんでした", 502);
   return value.flatMap((entry) => {
     const item = entry as Record<string, unknown>;
-    const id = String(item.id ?? "").trim();
-    if (!/^[-_a-zA-Z0-9:.]+$/.test(id) || item.white === true) return [];
+    const userId = String(item.userId ?? "").trim();
+    if (!/^[-_a-zA-Z0-9:.]+$/.test(userId) || item.white === true) return [];
     return [{
-      id,
+      userId,
       displayName: String(item.displayName ?? "").trim(),
       lastLogin: typeof item.lastLogin === "string" && item.lastLogin ? item.lastLogin : null,
     }];
   });
 }
 
-function sanitizeDetectedName(name: string, playerId: string) {
+function sanitizeDetectedName(name: string, userId: string) {
   // eslint-disable-next-line no-control-regex
   const cleaned = name.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 64);
-  return cleaned || playerId;
+  return cleaned || userId;
 }
 
-export async function registerDetectedPlayers(entries: { playerId: string; displayName: string }[]) {
+export async function registerDetectedPlayers(entries: { userId: string; displayName: string }[]) {
   const results: DetectedRegistrationResult[] = [];
   // players.json への書き込み競合を避けるため逐次実行する
   for (const entry of entries) {
-    const playerId = entry.playerId.trim();
-    const displayName = sanitizeDetectedName(entry.displayName, playerId);
-    if (!detectedIdPattern.test(playerId)) {
-      results.push({ playerId, ok: false, reason: "invalid ID" });
+    const userId = entry.userId.trim();
+    const displayName = sanitizeDetectedName(entry.displayName, userId);
+    if (!detectedIdPattern.test(userId)) {
+      results.push({ userId, ok: false, reason: "invalid ID" });
       continue;
     }
     if (forbiddenNameChars.test(displayName)) {
-      results.push({ playerId, ok: false, reason: "invalid name" });
+      results.push({ userId, ok: false, reason: "invalid name" });
       continue;
     }
     try {
-      await execWhitelistScript(["add", playerId, displayName]);
-      results.push({ playerId, ok: true });
+      await execWhitelistScript(["add", userId, displayName]);
+      results.push({ userId, ok: true });
     } catch (error) {
       const stderr = (error as { stderr?: unknown }).stderr;
-      results.push({ playerId, ok: false, reason: typeof stderr === "string" && stderr.trim() ? stderr.trim().split("\n").pop() : "whitelist.sh add failed" });
+      results.push({ userId, ok: false, reason: typeof stderr === "string" && stderr.trim() ? stderr.trim().split("\n").pop() : "whitelist.sh add failed" });
     }
   }
   return { ...(await readPlayers()), results };
 }
 
 export async function addRegisteredPlayer(input: AddRegisteredPlayerInput) {
-  const playerId = input.playerId.trim();
+  const userId = input.userId.trim();
   const displayName = input.displayName.trim();
-  assertPlayerId(playerId);
+  assertUserId(userId);
   if (!displayName) throw new PlayerStoreError("プレイヤー名を入力してください", 400);
   if (input.enabled) {
     try {
@@ -330,10 +332,10 @@ export async function addRegisteredPlayer(input: AddRegisteredPlayerInput) {
     }
   }
   const players = await readRegisteredPlayers();
-  if (players.some((player) => player.id === playerId)) throw new PlayerStoreError("このプレイヤーは既に登録されています", 409);
+  if (players.some((player) => player.userId === userId)) throw new PlayerStoreError("このユーザーは既に登録されています", 409);
   const timestamp = new Date().toISOString();
   const nextPlayers = [...players, {
-    id: playerId,
+    userId,
     displayName,
     role: input.role?.trim() || "メンバー",
     white: input.enabled,
@@ -343,22 +345,22 @@ export async function addRegisteredPlayer(input: AddRegisteredPlayerInput) {
     firstLogin: timestamp,
   }];
   await writeRegisteredPlayers(nextPlayers);
-  if (input.enabled) await updateWhitelist(playerId, true);
+  if (input.enabled) await updateWhitelist(userId, true);
   return await readPlayers();
 }
 
-export async function deleteRegisteredPlayer(playerId: string) {
-  const normalizedPlayerId = playerId.trim();
-  assertPlayerId(normalizedPlayerId);
+export async function deleteRegisteredPlayer(userId: string) {
+  const normalizedUserId = userId.trim();
+  assertUserId(normalizedUserId);
   try {
     await resumePalworldIfPaused();
   } catch {
     throw new PlayerStoreError("AUTO PAUSEから復帰できないためRCONを実行できません", 503);
   }
   const players = await readRegisteredPlayers();
-  if (!players.some((player) => player.id === normalizedPlayerId)) throw new PlayerStoreError("登録済みプレイヤーが見つかりません", 404);
-  await writeRegisteredPlayers(players.filter((player) => player.id !== normalizedPlayerId));
-  await updateWhitelist(normalizedPlayerId, false);
+  if (!players.some((player) => player.userId === normalizedUserId)) throw new PlayerStoreError("登録済みユーザーが見つかりません", 404);
+  await writeRegisteredPlayers(players.filter((player) => player.userId !== normalizedUserId));
+  await updateWhitelist(normalizedUserId, false);
   return await readPlayers();
 }
 

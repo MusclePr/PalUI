@@ -2,6 +2,8 @@
 
 set -e
 
+cd "$(dirname "$0")"
+
 source .env
 
 : "${STEAM_WEBAPIKEY:?STEAM_WEBAPIKEY is not set}"
@@ -27,17 +29,17 @@ function PlayersJSON_Save() {
 }
 
 function PlayersJSON_GetDisplayName() {
-  echo "${PlayersJSON}" | jq -r --arg id "$1" '.[] | select(.id == $id) | .displayName'
+  echo "${PlayersJSON}" | jq -r --arg id "$1" '.[] | select(.userId == $id) | .displayName'
 }
 
 function PlayersJSON_IsWhite() {
-  echo "${PlayersJSON}" | jq -r --arg id "$1" '.[] | select(.id == $id) | .white'
+  echo "${PlayersJSON}" | jq -r --arg id "$1" '.[] | select(.userId == $id) | .white'
 }
 
 function PlayersJSON_SetWhite() {
   PlayersJSON="$(echo "${PlayersJSON}" | jq --arg id "$1" --argjson white "${2:-true}" '
-    if any(.[]; .id == $id)
-    then map(if .id == $id then .white = $white else . end)
+    if any(.[]; .userId == $id)
+    then map(if .userId == $id then .white = $white else . end)
     else . end
   ')"
 }
@@ -47,9 +49,9 @@ function PlayersJSON_Add() {
   local -r name="$2"
   local -r white="${3:-true}"
   PlayersJSON="$(echo "${PlayersJSON}" | jq --arg id "$id" --argjson white "$white" --arg name "$name" '
-    if any(.[]; .id == $id)
-    then map(if .id == $id then . + {"displayName": $name, "white": $white} else . end)
-    else . + [{"id": $id, "displayName": $name, "white": $white}]
+    if any(.[]; .userId == $id)
+    then map(if .userId == $id then . + {"displayName": $name, "white": $white} else . end)
+    else . + [{"userId": $id, "displayName": $name, "white": $white}]
     end
   ')"
 }
@@ -79,7 +81,7 @@ function PlayersJSON_SyncWhitelist() {
   whitelist_json="$(printf '%s\n' "${WHITELIST[@]}" | jq -R . | jq -s .)"
   PlayersJSON="$(echo "${PlayersJSON}" | jq --argjson wl "$whitelist_json" '
     map(
-      .id as $id |
+      .userId as $id |
       if ($wl | index($id)) != null
       then .white = true
       else .white = false
@@ -153,7 +155,7 @@ function FormatID() {
   steam_id="$(GetSteamID "${id}")" && \
     anchor="$(FormatAnchor "https://steamcommunity.com/profiles/${steam_id}" "${name:-URL}")"
   if [ "${MODE}" = "json" ]; then
-    printf '{"id":"%s", "lastLogin":"%s", "displayName":"%s", "white": %s}' "${id}" "${LAST_LOGIN["${id}"]}" "${name}" "${white:-false}"
+    printf '{"userId":"%s", "lastLogin":"%s", "displayName":"%s", "white": %s}' "${id}" "${LAST_LOGIN["${id}"]}" "${name}" "${white:-false}"
   else
     printf '%s %s %s' "${id}" "${LAST_LOGIN["${id}"]}" "${anchor}"
   fi
@@ -192,7 +194,7 @@ function FetchNotWhitelist() {
   logs="$(docker compose logs --no-log-prefix --no-color -t pal | grep -E 'is not whitelisted' || echo "")"
   # デバッグ用のログでフォールバック（ローカル環境でのみ動作）
   [ -z "${logs}" ] && logs="$(cat ./.palworld-server-not-whitelisted.log || echo "")"
-  ids="$(echo "${logs}" | sed -E 's/^([^ ]+).*\[info\] (\w+) \| ([0-9\.]+).*/\1 \2 \3/')"
+  ids="$(echo "${logs}" | sed -E 's/^([^ ]+).*info.*\] (\w+) \| ([0-9\.]+).*/\1 \2 \3/')"
   i=0
   while IFS= read -r line; do
     utc_time="$(echo "${line}" | awk '{print $1}')"
@@ -224,7 +226,7 @@ function RCON() {
 }
 
 # 有効なIDかどうかを判定する関数
-# 引数: プレイヤーID
+# 引数: ユーザーID
 # 戻り値: 有効なIDなら0、無効なIDなら1
 function IsVaridID() {
   local id="$1"

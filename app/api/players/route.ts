@@ -22,26 +22,26 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   if (!readRole(request)) return unauthorized();
   try {
-    const body = await request.json() as { action?: unknown; playerId?: unknown; displayName?: unknown; enabled?: unknown; role?: unknown; players?: unknown };
+    const body = await request.json() as { action?: unknown; userId?: unknown; displayName?: unknown; enabled?: unknown; role?: unknown; players?: unknown };
     if (body.action === "detect") {
       return NextResponse.json({ detected: await detectUnregisteredPlayers() });
     }
     if (body.action === "register-detected" && Array.isArray(body.players) && body.players.length > 0 && body.players.length <= 50) {
-      const entries = body.players.map((item) => item as { playerId?: unknown; displayName?: unknown });
-      if (!entries.every((item) => typeof item.playerId === "string" && typeof item.displayName === "string")) {
+      const entries = body.players.map((item) => item as { userId?: unknown; displayName?: unknown });
+      if (!entries.every((item) => typeof item.userId === "string" && typeof item.displayName === "string")) {
         return NextResponse.json({ error: "不正なプレイヤー操作です" }, { status: 400 });
       }
-      return NextResponse.json(await registerDetectedPlayers(entries.map((item) => ({ playerId: item.playerId as string, displayName: item.displayName as string }))));
+      return NextResponse.json(await registerDetectedPlayers(entries.map((item) => ({ userId: item.userId as string, displayName: item.displayName as string }))));
     }
-    if ((body.action === "whitelist" || body.action === undefined) && typeof body.playerId === "string" && typeof body.enabled === "boolean") {
-      await updateWhitelist(body.playerId, body.enabled);
+    if ((body.action === "whitelist" || body.action === undefined) && typeof body.userId === "string" && typeof body.enabled === "boolean") {
+      await updateWhitelist(body.userId, body.enabled);
       return NextResponse.json(await readPlayers());
     }
-    if (body.action === "add" && typeof body.playerId === "string" && typeof body.displayName === "string" && typeof body.enabled === "boolean") {
-      return NextResponse.json(await addRegisteredPlayer({ playerId: body.playerId, displayName: body.displayName, enabled: body.enabled, role: typeof body.role === "string" ? body.role : undefined }));
+    if (body.action === "add" && typeof body.userId === "string" && typeof body.displayName === "string" && typeof body.enabled === "boolean") {
+      return NextResponse.json(await addRegisteredPlayer({ userId: body.userId, displayName: body.displayName, enabled: body.enabled, role: typeof body.role === "string" ? body.role : undefined }));
     }
-    if (body.action === "delete" && typeof body.playerId === "string") {
-      return NextResponse.json(await deleteRegisteredPlayer(body.playerId));
+    if (body.action === "delete" && typeof body.userId === "string") {
+      return NextResponse.json(await deleteRegisteredPlayer(body.userId));
     }
     return NextResponse.json({ error: "不正なプレイヤー操作です" }, { status: 400 });
   } catch (error) {

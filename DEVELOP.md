@@ -96,7 +96,7 @@ host
 
   テンプレートのコピーは既存ファイルを上書きしないため、既存設定やゲームデータは保持される一方、既存ファイルに対するテンプレート更新は自動適用されない。追加された新規ファイルは次回起動時に配置される。`compose.yml` は例外として `template.compose.yml` から毎回再生成されるため、直接編集してはならない。既存の `template.compose.yml` も自動更新されないため、更新時は必要に応じて手動で移行する。
 
-  Palworld 専用サーバーの Compose には `pal`、`map`、`proxy` サービスが含まれる。`map` は `MAP_PORT`（既定値 `8080`）で公開されるため、palui や他サービスとホストポートが重複しない値を設定する。`ADMIN_PASSWORD` は Live Map が REST API に接続するためのパスワードで、Palworld サーバー側の管理者パスワードと一致させる。
+  Palworld 専用サーバーの Compose には `pal` と `map` サービスが含まれる。`map` は `MAP_PORT`（既定値 `8080`）で公開され、REST API は `http://pal:8213` へ直接接続する。`ADMIN_PASSWORD` は Live Map が REST API に接続するためのパスワードで、Palworld サーバー側の管理者パスワードと一致させる。
 
 ```mermaid
 flowchart LR
@@ -140,12 +140,12 @@ Compose コマンドを組み立てる際、利用者入力をシェル文字列
 
 ダッシュボードはログイン後の既定画面とし、以下を提供する。
 
-- Compose サービス `pal` の状態を `未作成`、`停止中`、`起動中`、`起動完了`、`異常` として明示する。Docker上でrunningになった後も、ログに `REST API started on port <port>` が出るまでは`起動中`とする。`proxy` と `map` は監視指標の対象にしない。
+- `/server/palworld/.status` に有効なJSONがある場合、`starting`、`updating`、`running`、`stopping`、`paused`、`stopped` の状態と0〜100の進捗を優先して表示する。進捗バーは100%が3秒続くと隠す。ファイルがない、または不正な場合はDocker状態へ戻し、Docker上でrunningになった後もログに `REST API started on port <port>` が出るまでは`起動中`とする。監視指標の対象は `pal` のみ。
 - `pal` のコンテナ名、イメージタグ、稼働時間、再起動回数、Compose サービス名を表示する。
 - Docker stats から `pal` の CPU・メモリを取得し、`info` と `metrics` からサーバーバージョンとゲーム指標を表示する。`.paused` 中はREST APIをポーリングしない。
 - VERSION、サーバー名、説明、ワールド日数を `/server/.dashboard-cache.json` に原子的に保存し、REST応答が得られない場合やDocker接続が失われた場合は最後に保存した値を表示する。取得できた項目だけ更新し、他のキャッシュ値は保持する。
 - Docker stats の取得に失敗した場合、最後に取得できた値と取得時刻を示し、推測値を表示しない。
-- `pal`、`proxy`、`map` を選択できるSSEログドックはダッシュボードだけに表示する。ログ時刻はDockerログに含まれる場合だけ表示し、時刻のない行へ現在時刻を付与しない。ANSI エスケープシーケンスを安全に除去し、ブラウザとサーバー中継の保持量に上限を設ける。
+- `pal`、`map` を選択できるSSEログドックはダッシュボードだけに表示する。ログ時刻はDockerログに含まれる場合だけ表示し、時刻のない行へ現在時刻を付与しない。ANSI エスケープシーケンスを安全に除去し、ブラウザとサーバー中継の保持量に上限を設ける。
 - 状態、メトリクス、ログストリームのいずれかが失敗しても、他の表示と操作は継続可能とする。
 
 ### 5.2 サーバーライフサイクル
@@ -155,7 +155,7 @@ Compose コマンドを組み立てる際、利用者入力をシェル文字列
 | 起動 | Compose全体に `docker compose --project-directory=/server --file /server/compose.yml up -d` を実行する。 | 管理者、運用者 | 不要 |
 | 停止 | Compose全体に `docker compose --project-directory=/server --file /server/compose.yml down` を実行する。Palコンテナは既存の `stop_grace_period: 30s` を使う。 | 管理者、運用者 | 必須 |
 | 再起動 | Compose全体を `down` してから `up -d` を実行し、環境変数を再読み込みする。 | 管理者、運用者 | 必須 |
-起動・停止・再起動は `pal`、`proxy`、`map` を含むCompose全体を対象とする。停止・再起動前に `rest-cli shutdown`、`rest-cli stop`、`rest-cli save` は実行せず、Composeの停止猶予に委ねる。明示的な再起動に `docker compose restart` は使わず、必ず `down` 完了後に `up -d` を実行する。停止・再起動の前に確認を求める。入力されたコマンド断片を受け付けず、実行中のライフサイクル操作は対象プロジェクト単位で排他する。
+起動・停止・再起動は `pal`、`map` を含むCompose全体を対象とする。停止・再起動前に `rest-cli shutdown`、`rest-cli stop`、`rest-cli save` は実行せず、Composeの停止猶予に委ねる。明示的な再起動に `docker compose restart` は使わず、必ず `down` 完了後に `up -d` を実行する。停止・再起動の前に確認を求める。入力されたコマンド断片を受け付けず、実行中のライフサイクル操作は対象プロジェクト単位で排他する。
 
 ### 5.3 REST API によるゲーム操作
 
@@ -408,9 +408,9 @@ asaui のように、サイドバーによる明確な画面遷移、状態を�
 ### 11.2 受入基準
 
 - 管理者はブラウザから対象プロジェクトの状態を確認し、起動、保存、告知、停止、再起動を実行できる。
-- 監視は `pal` のみで、起動・停止・再起動は `pal` / `proxy` / `map` を含むCompose全体に適用される。起動は `up -d`、停止は `down`、再起動は `down` 後の `up -d` となり、Compose `restart` や停止前のREST shutdown/saveは行わない。
+- 監視は `pal` のみで、起動・停止・再起動は `pal` / `map` を含むCompose全体に適用される。起動は `up -d`、停止は `down`、再起動は `down` 後の `up -d` となり、Compose `restart` や停止前のREST shutdown/saveは行わない。
 - VERSION、サーバー名、説明、ワールド日数はキャッシュファイルに保存され、DockerまたはREST応答が得られない場合に最後に保存した値へフォールバックする。
-- 3サービスを選択できるログドックはダッシュボードだけに表示され、他ページではSSE接続を開始しない。コンテナログに時刻がない行の表示時刻は空欄となる。
+- 2サービスを選択できるログドックはダッシュボードだけに表示され、他ページではSSE接続を開始しない。コンテナログに時刻がない行の表示時刻は空欄となる。
 - 運用者は管理者資格情報の変更・確認を除き、ダッシュボード、ログ、プレイヤー、メトリクス、告知、保存、ライフサイクル、プレイヤー管理、バックアップ、設定変更を実行できる。
 - 設定変更はdotenvとCompose展開の検証を通過したときだけ保存され、外部変更との競合時には上書きされない。対象Compose自体は変更しない。
 - REST API ポートをホスト公開しない構成で、palui から `info`、`players`、`announce`、`save` を実行できる。

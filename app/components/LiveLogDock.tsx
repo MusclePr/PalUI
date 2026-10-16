@@ -4,20 +4,20 @@ import { ChevronDown, ChevronUp, Download, RefreshCw, TerminalSquare } from "luc
 import { useEffect, useRef, useState } from "react";
 import { renderAnsiLine } from "./AnsiText";
 
-type LogService = "pal" | "proxy" | "map";
+type LogService = "pal" | "map";
 type LogEntry = { id: number; source: "stdout" | "stderr"; line: string; timestamp: string | null };
 type StreamMessage = { source?: unknown; line?: unknown; timestamp?: unknown; message?: unknown };
 type LogEntriesByService = Record<LogService, LogEntry[]>;
 type StreamState = "connecting" | "connected" | "reconnecting" | "disconnected";
 
-const services: LogService[] = ["pal", "proxy", "map"];
+const services: LogService[] = ["pal", "map"];
 const storageKey = "palui-live-log-dock";
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "/palui";
 const maxCachedEntries = 300;
 const maxCachedLineLength = 2048;
 
 function emptyLogEntries(): LogEntriesByService {
-  return { pal: [], proxy: [], map: [] };
+  return { pal: [], map: [] };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

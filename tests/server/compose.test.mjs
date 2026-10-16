@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { composeCommand, hasPalworldReadyMarker, isComposeService, palworldBackupComposeArgs, parseComposeStats, runComposeLifecycle, runPalworldBackupCommand } from "../../lib/server/compose.ts";
+import { composeCommand, hasPalworldReadyMarker, isComposeService, palworldBackupComposeArgs, parseComposeStats, parsePalworldStatus, runComposeLifecycle, runPalworldBackupCommand } from "../../lib/server/compose.ts";
 
 test("Compose commands use the configured project directory and file", () => {
   const command = composeCommand(["ps"]);
@@ -12,12 +12,34 @@ test("Compose commands use the configured project directory and file", () => {
   assert.equal(command.args.at(-1), "ps");
 });
 
-test("only the three managed services are accepted", () => {
+test("only Palworld and map services are accepted", () => {
   assert.equal(isComposeService("pal"), true);
-  assert.equal(isComposeService("proxy"), true);
   assert.equal(isComposeService("map"), true);
+  assert.equal(isComposeService("proxy"), false);
   assert.equal(isComposeService("palui"), false);
   assert.equal(isComposeService(undefined), false);
+});
+
+test("Palworld status accepts supported states and numeric progress", () => {
+  for (const status of ["starting", "updating", "running", "stopping", "paused", "stopped"]) {
+    assert.deepEqual(parsePalworldStatus(JSON.stringify({ status, progress: 50 })), { status, progress: 50 });
+  }
+  assert.deepEqual(parsePalworldStatus('{"status":"running","progress":"100"}'), { status: "running", progress: 100 });
+  assert.deepEqual(parsePalworldStatus('{"status":"updating","progress":42.5}'), { status: "updating", progress: 42.5 });
+  assert.deepEqual(parsePalworldStatus('{"status":"starting","progress":0}'), { status: "starting", progress: 0 });
+});
+
+test("invalid Palworld status data falls back to the Docker state", () => {
+  for (const contents of [
+    "not json",
+    '{"status":"unknown","progress":20}',
+    '{"status":"running","progress":-1}',
+    '{"status":"running","progress":101}',
+    '{"status":"running","progress":"complete"}',
+    '{"status":"running"}',
+  ]) {
+    assert.equal(parsePalworldStatus(contents), null);
+  }
 });
 
 test("Pal readiness requires the REST API started log marker", () => {

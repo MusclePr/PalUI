@@ -87,6 +87,13 @@ test("bootstrap derives the standalone project name from PROJECT or defaults to 
   assert.match(defaultCompose, /^name: "dev_pal"$/m);
 });
 
+test("bootstrap renders the map against Palworld without a proxy service", (t) => {
+  const { compose } = renderCompose(t, {}, true);
+
+  assert.match(compose, /PALWORLD_REST_URL: http:\/\/pal:8213/);
+  assert.doesNotMatch(compose, /^  proxy:/m);
+});
+
 test("Docker Compose uses the rendered name for project and container names", (t) => {
   const version = spawnSync("docker", ["compose", "version"], { encoding: "utf8" });
   if (version.status !== 0) {
@@ -112,7 +119,8 @@ test("Docker Compose uses the rendered name for project and container names", (t
   assert.equal(config.name, "staging_pal");
   assert.equal(config.services.pal.container_name, "staging_pal-server");
   assert.equal(config.services.map.container_name, "staging_pal-map");
-  assert.equal(config.services.proxy.container_name, "staging_pal-proxy");
+  assert.equal(config.services.map.environment.PALWORLD_REST_URL, "http://pal:8213");
+  assert.equal(Object.hasOwn(config.services, "proxy"), false);
 });
 
 test("bootstrap rejects invalid Compose project names", (t) => {

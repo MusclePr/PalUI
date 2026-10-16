@@ -96,6 +96,11 @@ a { color: inherit; text-decoration: none; }
 .status-icon.sleeping { background: rgba(101,169,238,.1); color: var(--blue); }
 .status-title { align-items: center; display: flex; gap: 12px; margin: 5px 0 6px; }
 .status-title h2 { font-size: 20px; letter-spacing: -.03em; margin: 0; }
+.server-progress { margin-top: 13px; max-width: 320px; width: 100%; }
+.server-progress-meta { align-items: center; color: var(--faint); display: flex; font-family: 'DM Mono', monospace; font-size: 9px; justify-content: space-between; margin-bottom: 6px; }
+.server-progress-meta strong { color: var(--teal); font-size: 10px; font-weight: 500; }
+.server-progress-track { background: #080d11; border: 1px solid var(--line); border-radius: 999px; height: 7px; overflow: hidden; width: 100%; }
+.server-progress-track span { background: var(--teal); border-radius: inherit; display: block; height: 100%; transition: width .25s ease; }
 .status-badge { align-items: center; border-radius: 20px; display: inline-flex; font-size: 10px; font-weight: 700; gap: 5px; padding: 4px 8px; }
 .status-badge.success { background: rgba(127,208,141,.1); color: var(--green); }.status-badge.warning { background: rgba(233,170,96,.1); color: var(--orange); }.status-badge.danger { background: rgba(238,126,126,.1); color: var(--red); }
 .status-badge.sleeping { background: rgba(101,169,238,.1); color: var(--blue); }

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -12,10 +12,14 @@ const activeLifecycleOperations = new Set<string>();
 let palReadinessCacheKey: string | null = null;
 let palReadyMarkerDetected = false;
 
-export const composeServices = ["pal", "proxy", "map"] as const;
+export const composeServices = ["pal", "map"] as const;
 export type ComposeService = typeof composeServices[number];
 export type ComposeLifecycleAction = "start" | "stop" | "restart";
 export type ComposeServiceState = "not_created" | "running" | "stopped" | "starting" | "unknown";
+export type PalworldServerStatus = "starting" | "updating" | "running" | "stopping" | "paused" | "stopped";
+export type PalworldStatus = { status: PalworldServerStatus; progress: number };
+
+const palworldServerStatuses: PalworldServerStatus[] = ["starting", "updating", "running", "stopping", "paused", "stopped"];
 
 export type ComposeServiceSnapshot = {
   service: ComposeService;
@@ -46,6 +50,37 @@ export class ComposeOperationInProgressError extends Error {
 
 export function isComposeService(value: unknown): value is ComposeService {
   return typeof value === "string" && composeServices.includes(value as ComposeService);
+}
+
+export function parsePalworldStatus(contents: string): PalworldStatus | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(contents);
+  } catch {
+    return null;
+  }
+  if (!isRecord(value) || typeof value.status !== "string" || !palworldServerStatuses.includes(value.status as PalworldServerStatus)) {
+    return null;
+  }
+
+  const rawProgress = value.progress;
+  const progress = typeof rawProgress === "number"
+    ? rawProgress
+    : typeof rawProgress === "string" && /^\d+(?:\.\d+)?$/.test(rawProgress.trim())
+      ? Number(rawProgress)
+      : Number.NaN;
+  if (!Number.isFinite(progress) || progress < 0 || progress > 100) return null;
+
+  return { status: value.status as PalworldServerStatus, progress };
+}
+
+export async function readPalworldStatus(): Promise<PalworldStatus | null> {
+  try {
+    return parsePalworldStatus(await readFile(join(composeDirectory, "palworld", ".status"), "utf8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 export function hasPalworldReadyMarker(logs: string) {

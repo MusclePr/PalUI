@@ -148,13 +148,15 @@ function assertUserId(userId: string) {
 
 function normalizeRegisteredPlayers(value: unknown): RegisteredPlayer[] {
   if (!Array.isArray(value)) return [];
-  return value.map((player) => {
+  const normalized = value.map((player) => {
     const item = player as Record<string, unknown>;
     const userId = String(item.userId ?? "").trim();
+    const rawDisplayName = String(item.displayName ?? item.name ?? "").trim();
+    const rawRole = String(item.role ?? "メンバー").trim();
     return {
       userId,
-      displayName: String(item.displayName ?? item.name ?? "").trim(),
-      role: String(item.role ?? "メンバー").trim() || "メンバー",
+      displayName: /[\u0000-\u001f\u007f]/.test(rawDisplayName) ? "" : rawDisplayName,
+      role: /[\u0000-\u001f\u007f]/.test(rawRole) ? "メンバー" : rawRole || "メンバー",
       white: item.white === true,
       banned: item.banned === true,
       level: Number.isFinite(Number(item.level)) ? Number(item.level) : 1,
@@ -162,6 +164,41 @@ function normalizeRegisteredPlayers(value: unknown): RegisteredPlayer[] {
       firstLogin: typeof item.firstLogin === "string" ? item.firstLogin : null,
     };
   }).filter((player) => player.userId.length > 0);
+
+  const playersByUserId = new Map<string, RegisteredPlayer>();
+  for (const player of normalized) {
+    const existing = playersByUserId.get(player.userId);
+    if (!existing) {
+      playersByUserId.set(player.userId, player);
+      continue;
+    }
+
+    const displayName = [existing.displayName, player.displayName]
+      .find((name) => name.length > 0 && !/[\u0000-\u001f\u007f]/.test(name)) ?? "";
+    const role = [existing.role, player.role]
+      .find((value) => value !== "メンバー" && !/[\u0000-\u001f\u007f]/.test(value)) ?? "メンバー";
+    const timestamps = (values: (string | null)[], direction: "earliest" | "latest") => values
+      .filter((timestamp): timestamp is string => typeof timestamp === "string" && timestamp.length > 0)
+      .sort((left, right) => {
+        const leftTime = Date.parse(left);
+        const rightTime = Date.parse(right);
+        if (!Number.isFinite(leftTime)) return Number.isFinite(rightTime) ? 1 : 0;
+        if (!Number.isFinite(rightTime)) return -1;
+        return direction === "earliest" ? leftTime - rightTime : rightTime - leftTime;
+      })[0] ?? null;
+
+    playersByUserId.set(player.userId, {
+      ...existing,
+      displayName,
+      role,
+      white: existing.white || player.white,
+      banned: existing.banned || player.banned,
+      level: Math.max(existing.level, player.level),
+      firstLogin: timestamps([existing.firstLogin, player.firstLogin], "earliest"),
+      lastLogin: timestamps([existing.lastLogin, player.lastLogin], "latest"),
+    });
+  }
+  return [...playersByUserId.values()];
 }
 
 async function readRegisteredPlayers() {
@@ -174,8 +211,9 @@ async function readRegisteredPlayers() {
 
 async function writeRegisteredPlayers(players: RegisteredPlayer[]) {
   const temporaryFile = `${registeredPlayersFile}.tmp-${process.pid}`;
+  const normalizedPlayers = normalizeRegisteredPlayers(players);
   await mkdir(settingsRoot, { recursive: true });
-  await writeFile(temporaryFile, `${JSON.stringify(players, null, 2)}\n`, "utf8");
+  await writeFile(temporaryFile, `${JSON.stringify(normalizedPlayers, null, 2)}\n`, "utf8");
   await rename(temporaryFile, registeredPlayersFile);
 }
 

@@ -81,6 +81,31 @@ test("players API persists userId and ignores legacy identifier formats", async 
   assert.equal(saved[0].userId, "steam_76561198847285114");
   assert.equal("id" in saved[0], false);
   assert.equal("playerId" in saved[0], false);
+
+  await writeFile(join(serverDirectory, "players.json"), JSON.stringify([
+    { userId: "steam_duplicate", displayName: "まっする\nまっする", role: "メンバー", white: false, banned: false, level: 3, firstLogin: "2025-02-01T00:00:00.000Z", lastLogin: "2025-02-02T00:00:00.000Z" },
+    { userId: "steam_duplicate", displayName: "まっする", role: "管理者", white: true, banned: true, level: 12, firstLogin: "2025-01-01T00:00:00.000Z", lastLogin: "2025-03-01T00:00:00.000Z" },
+  ]));
+
+  const duplicateResponse = await GET(new Request("http://palui/api/players", { headers: { cookie: sessionCookie() } }));
+  assert.equal(duplicateResponse.status, 200);
+  const duplicatePlayers = (await duplicateResponse.json()).registeredPlayers;
+  assert.equal(duplicatePlayers.length, 1);
+  assert.deepEqual(duplicatePlayers[0], {
+    userId: "steam_duplicate",
+    displayName: "まっする",
+    role: "管理者",
+    white: true,
+    banned: true,
+    level: 12,
+    firstLogin: "2025-01-01T00:00:00.000Z",
+    lastLogin: "2025-03-01T00:00:00.000Z",
+  });
+
+  const addedAfterDuplicate = await POST(request({ action: "add", userId: "steam_new", displayName: "New player", enabled: false }));
+  assert.equal(addedAfterDuplicate.status, 200);
+  const savedAfterDuplicate = JSON.parse(await readFile(join(serverDirectory, "players.json"), "utf8"));
+  assert.equal(savedAfterDuplicate.filter((player) => player.userId === "steam_duplicate").length, 1);
 });
 
 test.after(async () => {

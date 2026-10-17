@@ -28,6 +28,37 @@ function PlayersJSON_Save() {
   echo "${PlayersJSON:-[]}" > "${PlayersJSONFile}"
 }
 
+function PlayersJSON_Normalize() {
+  PlayersJSON="$(echo "${PlayersJSON}" | jq '
+    def clean_text:
+      if type == "string" and (test("[[:cntrl:]]") | not) then . else "" end;
+    reduce .[] as $item (
+      {players: [], indexes: {}};
+      ($item.userId | if type == "string" then gsub("^\\s+|\\s+$"; "") else "" end) as $id |
+      if $id == "" then .
+      elif (.indexes | has($id)) then
+        .indexes[$id] as $index |
+        .players[$index] = (
+          .players[$index] as $existing |
+          $item as $incoming |
+          $existing
+          | .userId = $id
+          | .displayName = ([$existing.displayName, $incoming.displayName] | map(clean_text) | map(select(length > 0)) | first // "")
+          | .role = ([$existing.role, $incoming.role] | map(clean_text) | map(select(length > 0 and . != "メンバー")) | first // "メンバー")
+          | .white = ($existing.white == true or $incoming.white == true)
+          | .banned = ($existing.banned == true or $incoming.banned == true)
+          | .level = ([$existing.level, $incoming.level] | map(if type == "number" then . else 1 end) | max)
+          | .firstLogin = ([$existing.firstLogin, $incoming.firstLogin] | map(select(type == "string" and length > 0)) | sort | .[0] // null)
+          | .lastLogin = ([$existing.lastLogin, $incoming.lastLogin] | map(select(type == "string" and length > 0)) | sort | .[-1] // null)
+        )
+      else
+        .indexes[$id] = (.players | length)
+        | .players += [$item | .userId = $id | .displayName = (.displayName | clean_text) | .role = ((.role | clean_text) as $role | if $role == "" then "メンバー" else $role end)]
+      end
+    ) | .players
+  ')"
+}
+
 function PlayersJSON_GetDisplayName() {
   echo "${PlayersJSON}" | jq -r --arg id "$1" '.[] | select(.userId == $id) | .displayName'
 }
@@ -193,7 +224,7 @@ function FetchNotWhitelist() {
   local ids utc_time id ip logs
   logs="$(docker compose logs --no-log-prefix --no-color -t pal | grep -E 'is not whitelisted' || echo "")"
   # デバッグ用のログでフォールバック（ローカル環境でのみ動作）
-  [ -z "${logs}" ] && logs="$(cat ./.palworld-server-not-whitelisted.log || echo "")"
+  [ -z "${logs}" ] && logs="$(cat ./.palworld-server-not-whitelisted.log 2>/dev/null || echo "")"
   ids="$(echo "${logs}" | sed -E 's/^([^ ]+).*info.*\] (\w+) \| ([0-9\.]+).*/\1 \2 \3/')"
   i=0
   while IFS= read -r line; do
@@ -260,6 +291,7 @@ LoadWhitelist WHITELIST
 PlayersJSON=""
 PlayersJSON_Load
 OldPlayersJSON="${PlayersJSON}"
+PlayersJSON_Normalize
 PlayersJSON_SyncWhitelist
 if [ "${OldPlayersJSON}" != "${PlayersJSON}" ]; then
   PlayersJSON_Save

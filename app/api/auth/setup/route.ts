@@ -29,6 +29,7 @@ export async function POST(request: Request) {
   try {
     const body = await readSetupBody(request);
     if (typeof body.adminPassword !== "string" || typeof body.adminPasswordConfirmation !== "string" || typeof body.operatorPassword !== "string" || typeof body.operatorPasswordConfirmation !== "string") return NextResponse.json({ error: "4つの入力欄をすべて入力してください" }, { status: 400 });
+    if (!body.adminPassword || !body.operatorPassword) return NextResponse.json({ error: "2つのパスワードを入力してください" }, { status: 400 });
     if (body.adminPassword !== body.adminPasswordConfirmation || body.operatorPassword !== body.operatorPasswordConfirmation) return NextResponse.json({ error: "確認用パスワードが一致していません" }, { status: 400 });
     await setupPasswords(body.adminPassword, body.operatorPassword);
     if (!wantsJson) return NextResponse.redirect(redirectUrl(request, "/login"), { status: 303 });

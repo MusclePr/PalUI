@@ -1,39 +1,30 @@
-import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { access, readFile, rename, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { readSettings, saveSettings } from "./palworld";
 
-const serverDir = "/server";
-const credentialsFile = ".passwd";
 const cookieName = "palui_session";
 const sessionMaxAge = 60 * 60 * 8;
 
 export type AuthRole = "admin" | "operator";
 
-async function getCredentialsPath() {
-  if (process.env.PALUI_SERVER_DIR) return join(process.env.PALUI_SERVER_DIR, credentialsFile);
-  try { await access(serverDir); return join(serverDir, credentialsFile); } catch { return join(process.cwd(), "palui", "server", credentialsFile); }
+async function readAuthSettings() {
+  const settings = await readSettings();
+  const compose = settings.categories.find((category) => category.category === "compose");
+  const adminPassword = compose?.values.find(({ key }) => key === "ADMIN_PASSWORD");
+  const operatorPassword = compose?.values.find(({ key }) => key === "OP_PASSWORD");
+  return {
+    settings,
+    values: {
+      ADMIN_PASSWORD: adminPassword?.value ?? "",
+      OP_PASSWORD: operatorPassword?.value ?? "",
+    },
+    configured: Boolean(adminPassword?.overridden && adminPassword.value && operatorPassword?.overridden && operatorPassword.value),
+  };
 }
 
-function readEnv(content: string) {
-  return content.split("\n").reduce<Record<string, string>>((result, line) => {
-    const match = line.match(/^\s*([A-Z0-9_]+)=(.*)$/);
-    if (match) result[match[1]] = match[2];
-    return result;
-  }, {});
-}
-
-function hashPassword(password: string) {
-  const salt = randomBytes(16).toString("hex");
-  const derived = scryptSync(password, salt, 64).toString("hex");
-  return `scrypt$${salt}$${derived}`;
-}
-
-function verifyPassword(password: string, encoded: string) {
-  const [, salt, expected] = encoded.split("$");
-  if (!salt || !expected) return false;
-  const actual = scryptSync(password, salt, 64);
-  const expectedBuffer = Buffer.from(expected, "hex");
-  return actual.length === expectedBuffer.length && timingSafeEqual(actual, expectedBuffer);
+function verifyPassword(password: string, expected: string) {
+  const actualBuffer = Buffer.from(password);
+  const expectedBuffer = Buffer.from(expected);
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
 function sessionSecret() {
@@ -76,37 +67,22 @@ export function isSameOriginRequest(request: Request) {
 }
 
 export async function getAuthState() {
-  const values = readEnv(await readFile(await getCredentialsPath(), "utf8").catch(() => ""));
-  return { configured: Boolean(values.ADMIN_PASSWORD_HASH && values.OP_PASSWORD_HASH), values };
-}
-
-async function writeCredentials(adminPassword: string, operatorPassword: string) {
-  const path = await getCredentialsPath();
-  const content = await readFile(path, "utf8").catch(() => "");
-  const replacements: Record<string, string> = { ADMIN_PASSWORD_HASH: hashPassword(adminPassword), OP_PASSWORD_HASH: hashPassword(operatorPassword) };
-  const lines = content.split("\n");
-  for (const key of Object.keys(replacements)) {
-    const index = lines.findIndex((line) => line.startsWith(`${key}=`));
-    if (index >= 0) lines[index] = `${key}=${replacements[key]}`;
-    else lines.push(`${key}=${replacements[key]}`);
-  }
-  const temporary = `${path}.tmp-${process.pid}`;
-  await writeFile(temporary, lines.join("\n"), { mode: 0o600 });
-  await rename(temporary, path);
+  const { values, configured } = await readAuthSettings();
+  return { configured, values };
 }
 
 export async function setupPasswords(adminPassword: string, operatorPassword: string) {
-  if (adminPassword.length < 8 || operatorPassword.length < 8) throw new Error("パスワードは8文字以上で設定してください");
-  const state = await getAuthState();
-  if (state.configured) throw new Error("パスワードは既に設定されています");
-  await writeCredentials(adminPassword, operatorPassword);
+  if (!adminPassword || !operatorPassword) throw new Error("両方のパスワードを入力してください");
+  const { settings, configured } = await readAuthSettings();
+  if (configured) throw new Error("パスワードは既に設定されています");
+  await saveSettings({ ADMIN_PASSWORD: adminPassword, OP_PASSWORD: operatorPassword }, settings.hash);
 }
 
 export async function authenticate(account: string, password: string) {
   const state = await getAuthState();
   const role = account === "admin" ? "admin" : account === "operator" ? "operator" : null;
-  const hash = role === "admin" ? state.values.ADMIN_PASSWORD_HASH : role === "operator" ? state.values.OP_PASSWORD_HASH : "";
-  return role && hash && verifyPassword(password, hash) ? { role, cookie: signSession(role) } : null;
+  const expected = role === "admin" ? state.values.ADMIN_PASSWORD : role === "operator" ? state.values.OP_PASSWORD : "";
+  return state.configured && role && expected && verifyPassword(password, expected) ? { role, cookie: signSession(role) } : null;
 }
 
 export const authCookie = { name: cookieName, maxAge: sessionMaxAge };

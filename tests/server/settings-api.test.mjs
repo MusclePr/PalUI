@@ -117,11 +117,17 @@ test("settings API restricts compose settings to admins", async () => {
     assert.ok(adminData.categories.some((category) => category.category === "compose"));
 
     const adminSave = await POST(request("admin", "POST", {
-      values: { ADMIN_PASSWORD: "admin-updated" },
+      values: { ADMIN_PASSWORD: "admin-updated", OP_PASSWORD: "operator-updated" },
       expectedHash: adminData.hash,
     }));
     assert.equal(adminSave.status, 200);
     assert.match(await readFile(join(settingsRoot, ".env"), "utf8"), /ADMIN_PASSWORD="admin-updated"/);
+    assert.match(await readFile(join(settingsRoot, ".env"), "utf8"), /OP_PASSWORD="operator-updated"/);
+
+    const operatorAfterPasswordSave = await GET(request("operator"));
+    const operatorSettingsAfterPasswordSave = await operatorAfterPasswordSave.json();
+    assert.ok(operatorSettingsAfterPasswordSave.categories.every((category) => category.category !== "compose"));
+    assert.equal(JSON.stringify(operatorSettingsAfterPasswordSave).includes("operator-updated"), false);
   } finally {
     if (previousRoot === undefined) delete process.env.PALUI_SERVER_DIR;
     else process.env.PALUI_SERVER_DIR = previousRoot;

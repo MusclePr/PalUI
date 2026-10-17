@@ -86,8 +86,7 @@ host
     |  |- game_server.env
     |  `- system.env
     |- palworld/ ... Palworld 専用サーバーのデータディレクトリ
-    |- .env ... ホスト向け環境変数（palui の管理対象）
-    |- .passwd ... palui の管理者・運用者パスワードハッシュ（0600、Git管理対象外）
+    |- .env ... ホスト向け環境変数（ADMIN_PASSWORD と OP_PASSWORD を含む）
     |- players.json ... 登録済みプレイヤー（userId、表示名、ロール、ホワイトリスト状態、BAN状態、初回ログイン日時、最終ログイン日時などを保存しておくためのファイル）
     |- template.compose.yml ... Palworld 専用サーバーのComposeテンプレート
     |- compose.yml ... テンプレートから起動時に生成（起動ごとに上書き）
@@ -313,8 +312,8 @@ Compose環境変数の変更は、原則として対象コンテナの再作成�
 ### 7.1 認証
 
 - palui はログイン必須とし、管理者用と運用者用の別資格情報を使用する。
-- 平文パスワードは保存しない。パスワードハッシュは `/server/.passwd` に保存し、ファイル権限を `0600` とする。比較にはタイミング攻撃に耐性のある手法を使う。
-- `.passwd` は対象コンテナの `env_file` に含めず、Git の管理対象から除外する。
+- 管理者のログインパスワードは Palworld と共有する `ADMIN_PASSWORD`、運用者のログインパスワードは `OP_PASSWORD` とし、どちらも `/server/.env` にそのまま保存する。空欄以外の複雑さ要件は設けない。
+- `.passwd` と旧 `OPERATOR_PASSWORD` は認証に使用しない。旧環境では初回設定画面から2つのパスワードを設定し直す。既存 `.passwd` は自動削除しない。
 - セッション Cookie は `HttpOnly`、`Secure`、`SameSite` を設定する。TLS 終端がリバースプロキシの場合も、転送ヘッダーを信頼する送信元を固定する。
 - Cookie を使う変更 API は CSRF 対策を必須とする。
 

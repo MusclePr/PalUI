@@ -751,6 +751,19 @@ function parseDefaultSettings(content: string) {
   return values;
 }
 
+function parseCategoryDefaults(category: string, content: string) {
+  const defaults = parseDefaultSettings(content);
+  const adminPassword = defaults.ADMIN_PASSWORD;
+  if (category === "compose" && adminPassword && !defaults.OP_PASSWORD) {
+    defaults.OP_PASSWORD = {
+      ...adminPassword,
+      defaultValue: "",
+      metadata: { ...adminPassword.metadata, label: "運用者パスワード", description: "運用者ログイン用" },
+    };
+  }
+  return defaults;
+}
+
 function validateSetting(value: string, metadata: SettingMetadata) {
   if (metadata.type === "BOOL" && !["true", "false", "True", "False"].includes(value)) throw new Error(`${metadata.label}: BOOL の値が不正です`);
   if (metadata.type === "INT" || metadata.type === "FLOAT") {
@@ -852,7 +865,7 @@ export async function readSettings() {
   const parsedFiles = Object.fromEntries(settingsTargets.map((target) => [target, parseDotenv(fileContents[target])])) as Record<SettingsTarget, Record<string, string>>;
   const categories = await Promise.all(Object.entries(settingsFiles).map(async ([category, definition]) => {
     const content = await readFile(`${settingsRoot}/${definition.defaults}`, "utf8").catch(() => "");
-    const defaults = parseDefaultSettings(content);
+    const defaults = parseCategoryDefaults(category, content);
     const current = parsedFiles[definition.target];
     return {
       category,
@@ -869,7 +882,7 @@ export async function saveSettings(values: Record<string, string>, expectedHash:
   const settingsMetadata: Record<string, { defaultValue: string; metadata: SettingMetadata; target: SettingsTarget }> = {};
   for (const [category, definition] of Object.entries(settingsFiles)) {
     const content = await readFile(`${settingsRoot}/${definition.defaults}`, "utf8").catch(() => "");
-    for (const [key, setting] of Object.entries(parseDefaultSettings(content))) settingsMetadata[key] = { ...setting, target: definition.target };
+    for (const [key, setting] of Object.entries(parseCategoryDefaults(category, content))) settingsMetadata[key] = { ...setting, target: definition.target };
   }
 
   const changes = new Map<SettingsTarget, Map<string, string | null>>(settingsTargets.map((target) => [target, new Map()]));
@@ -878,7 +891,8 @@ export async function saveSettings(values: Record<string, string>, expectedHash:
     if (!setting) continue;
     if (typeof value !== "string") throw new Error(`${key}: 設定値の形式が不正です`);
     validateSetting(value, setting.metadata);
-    changes.get(setting.target)?.set(key, value === setting.defaultValue ? null : value);
+    const credentialKey = key === "ADMIN_PASSWORD" || key === "OP_PASSWORD";
+    changes.get(setting.target)?.set(key, value === setting.defaultValue && !credentialKey ? null : value);
   }
 
   const updatedContents: Record<SettingsTarget, string> = {

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   if (!request.cookies.has("palui_session")) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";

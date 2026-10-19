@@ -169,3 +169,16 @@ body:has(.dashboard-shell .live-log-dock.is-expanded) .dashboard-shell .page-con
 @media (max-width: 700px) { .live-log-dock { left: 0; }.live-log-bar { gap: 11px; min-height: 47px; padding: 0 13px; }.live-log-panel { height: min(45vh, 350px); min-height: 175px; padding: 11px 13px 0; }.live-log-state { font-size: 8px; gap: 5px; }.live-log-service select { min-width: 76px; padding: 7px 20px 7px 7px; }.live-log-download { height: 30px; width: 30px; }.live-log-entry { font-size: 9px; gap: 8px; grid-template-columns: 62px minmax(0, 1fr); }.dashboard-shell .page-content { padding-bottom: 96px; } body:has(.dashboard-shell .live-log-dock.is-expanded) .dashboard-shell .page-content { padding-bottom: min(58vh, 400px); } }
 .detect-empty { margin-top: 18px !important; }
 .restore-dialog { max-width: min(720px, calc(100vw - 40px)); }
+.setting-label { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.setting-label-line { align-items: center; display: flex; gap: 7px; min-width: 0; }
+.setting-label-line strong { flex: 1; }
+.setting-reset-button { align-items: center; background: transparent; border: 1px solid transparent; border-radius: 4px; color: var(--faint); display: inline-flex; flex: 0 0 auto; gap: 5px; justify-content: center; padding: 4px; }
+.setting-reset-button:hover:not(:disabled) { background: rgba(93,211,191,.08); border-color: rgba(93,211,191,.25); color: var(--teal); }
+.setting-reset-button:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.setting-reset-button:disabled { cursor: not-allowed; opacity: .4; }
+.setting-reset-item { height: 24px; width: 24px; }
+.settings-group-heading { align-items: center; display: inline-flex; flex-wrap: wrap; gap: 10px; }
+.setting-reset-section { color: var(--muted); font-family: 'Manrope', sans-serif; font-size: 10px; font-weight: 600; letter-spacing: 0; padding: 4px 6px; }
+.setting-reset-category { border-color: var(--line); color: var(--muted); font-size: 10px; gap: 6px; padding: 7px 9px; white-space: nowrap; }
+.setting-reset-category:hover:not(:disabled) { border-color: var(--teal); }
+@media (max-width: 700px) { .setting-reset-category { align-self: flex-start; } }

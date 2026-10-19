@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, ChevronRight, Database, Eye, EyeOff, FileCog, LayoutDashboard, Menu, Save, Settings, TerminalSquare, Users, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Database, Eye, EyeOff, FileCog, LayoutDashboard, Menu, RotateCcw, Save, Settings, TerminalSquare, Users, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { SidebarFooter } from "../components/SidebarFooter";
 
@@ -56,11 +56,34 @@ export default function SettingsPage() {
   }, []);
 
   const active = categories.find((category) => category.category === activeCategory);
+  const isAdmin = categories.some((category) => category.category === "compose");
+  const settingsDescription = categories.length === 0
+    ? null
+    : isAdmin
+      ? ".env 設定は .env、それ以外は override.env に保存します。"
+      : "override.env にデフォルトからの変更点だけ保存します。";
   const changed = useMemo(() => categories.flatMap((category) => category.values).filter((setting) => draft[setting.key] !== undefined && !valuesEqual(setting, draft[setting.key], setting.value)), [categories, draft]);
 
   function updateSetting(key: string, value: string) {
     setDraft((current) => ({ ...current, [key]: value }));
     setNotice("未保存の変更があります");
+  }
+
+  function isAtDefault(setting: Setting) {
+    const value = draft[setting.key] ?? setting.value;
+    return valuesEqual(setting, value, setting.defaultValue);
+  }
+
+  function resetSettings(settings: Setting[]) {
+    const resetKeys = new Set(settings.map((setting) => setting.key));
+    const hasChangesAfterReset = changed.some((setting) => !resetKeys.has(setting.key))
+      || settings.some((setting) => !valuesEqual(setting, setting.defaultValue, setting.value));
+    setDraft((current) => {
+      const next = { ...current };
+      for (const setting of settings) next[setting.key] = setting.defaultValue;
+      return next;
+    });
+    setNotice(hasChangesAfterReset ? "未保存の変更があります" : "設定は最新です");
   }
 
   async function save() {
@@ -83,7 +106,17 @@ export default function SettingsPage() {
   function renderSetting(setting: Setting) {
     const value = draft[setting.key] ?? setting.value;
     const isChanged = !valuesEqual(setting, value, setting.value);
-    return <div key={setting.key} className={`setting-row ${isChanged ? "is-changed" : ""}`}><span><strong>{setting.label || setting.key}</strong><small>{setting.description || (isChanged ? `既定値: ${setting.defaultValue}` : "既定値")}</small></span><div className={`setting-input setting-type-${setting.type.toLowerCase()}`}>{renderInput(setting, value)}</div></div>;
+    const label = setting.label || setting.key;
+    return <div key={setting.key} className={`setting-row ${isChanged ? "is-changed" : ""}`}>
+      <span className="setting-label">
+        <span className="setting-label-line">
+          <strong>{label}</strong>
+          <button type="button" className="setting-reset-button setting-reset-item" onClick={() => resetSettings([setting])} disabled={busy || isAtDefault(setting)} aria-label={`${label}を既定値に戻す`} title="既定値に戻す"><RotateCcw size={13} aria-hidden="true" /></button>
+        </span>
+        <small>{setting.description || (isChanged ? `既定値: ${setting.defaultValue}` : "既定値")}</small>
+      </span>
+      <div className={`setting-input setting-type-${setting.type.toLowerCase()}`}>{renderInput(setting, value)}</div>
+    </div>;
   }
 
   function renderGroups(settings: Setting[]) {
@@ -92,11 +125,61 @@ export default function SettingsPage() {
       const expanded = !group.collapsible || expandedSections[key] === true;
       const contentId = `settings-section-${key.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
       return <fieldset className={`settings-group ${group.collapsible ? "is-collapsible" : ""}`} key={key}>
-        <legend>{group.collapsible ? <button type="button" className="settings-group-toggle" aria-expanded={expanded} aria-controls={contentId} onClick={() => setExpandedSections((current) => ({ ...current, [key]: !expanded }))}>{expanded ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}<span>{group.heading}</span><small>{expanded ? "表示中" : "非表示"}</small></button> : group.heading}</legend>
+        <legend>{group.collapsible ? <span className="settings-group-heading">
+          <button type="button" className="settings-group-toggle" aria-expanded={expanded} aria-controls={contentId} onClick={() => setExpandedSections((current) => ({ ...current, [key]: !expanded }))}>{expanded ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}<span>{group.heading}</span><small>{expanded ? "表示中" : "非表示"}</small></button>
+          <button type="button" className="setting-reset-button setting-reset-section" onClick={() => resetSettings(group.settings)} disabled={busy || group.settings.every(isAtDefault)} aria-label={`${group.heading}を既定値に戻す`} title={`${group.heading}を既定値に戻す`}><RotateCcw size={12} aria-hidden="true" /><span>戻す</span></button>
+        </span> : group.heading}</legend>
         <div id={group.collapsible ? contentId : undefined} hidden={!expanded}>{group.settings.map(renderSetting)}</div>
       </fieldset>;
     });
   }
 
-  return <div className="app-shell"><aside className={`sidebar ${mobileNav ? "is-open" : ""}`}><div className="sidebar-header"><div className="brand-mark"><TerminalSquare size={19} /> PALUI</div><button className="icon-button mobile-close" onClick={() => setMobileNav(false)} aria-label="メニューを閉じる"><X size={18} /></button></div><div className="server-selector"><span className="signal-dot" /><div><small>MANAGED SERVER</small><strong>palworld-server</strong></div></div><nav className="main-nav" aria-label="メインナビゲーション"><p className="nav-label">OPERATIONS</p>{navItems.map(({ label, icon: Icon, href, active }) => <a href={`${basePath}${href}`} className={active ? "active" : ""} key={label}><Icon size={17} /> {label}{active && <span className="nav-pip" />}</a>)}</nav><SidebarFooter /></aside><main className="content-area"><header className="topbar"><button className="icon-button menu-trigger" onClick={() => setMobileNav(true)} aria-label="メニューを開く"><Menu size={20} /></button><div className="breadcrumbs"><span>OPERATIONS</span><b>/</b><strong>設定</strong></div><div className="topbar-meta"><span className="live-indicator"><i /> LIVE</span><span className="topbar-divider" /><span className="muted">17 Sep 2026, 14:32 JST</span></div></header><div className="page-content"><div className="page-heading"><div><p className="eyebrow">CONFIGURATION / 04</p><h1>設定</h1><p className="muted">Compose 設定は .env、それ以外は override.env に保存します。</p></div><button className="primary-button" onClick={save} disabled={busy || changed.length === 0}><Save size={15} /> {busy ? "保存中..." : "変更を保存"}</button></div><div className={`notice-bar ${changed.length ? "notice-warning" : ""}`}><span className="notice-icon">{changed.length ? <FileCog size={14} /> : <Check size={14} />}</span><span>{notice}</span></div><section className="settings-layout panel"><div className="settings-tabs" role="tablist">{categories.map((category) => { const hasChanges = category.values.some((setting) => draft[setting.key] !== undefined && !valuesEqual(setting, draft[setting.key], setting.value)); return <button key={category.category} className={activeCategory === category.category ? "active" : ""} onClick={() => setActiveCategory(category.category)} role="tab">{labels[category.category] ?? category.category}{hasChanges && <span className="settings-tab-indicator" aria-label="未保存の変更あり" />}</button>; })}</div><div className="settings-form">{active && renderGroups(active.values)}</div></section><div className="settings-footer"><span><Check size={14} /> compose.yml は変更しません</span><span>{changed.length} 件の未保存変更</span></div></div></main></div>;
+  return (
+    <div className="app-shell">
+      <aside className={`sidebar ${mobileNav ? "is-open" : ""}`}>
+        <div className="sidebar-header">
+          <div className="brand-mark"><TerminalSquare size={19} /> PALUI</div>
+          <button className="icon-button mobile-close" onClick={() => setMobileNav(false)} aria-label="メニューを閉じる"><X size={18} /></button>
+        </div>
+        <div className="server-selector"><span className="signal-dot" /><div><small>MANAGED SERVER</small><strong>palworld-server</strong></div></div>
+        <nav className="main-nav" aria-label="メインナビゲーション">
+          <p className="nav-label">OPERATIONS</p>
+          {navItems.map(({ label, icon: Icon, href, active }) => <a href={`${basePath}${href}`} className={active ? "active" : ""} key={label}><Icon size={17} /> {label}{active && <span className="nav-pip" />}</a>)}
+        </nav>
+        <SidebarFooter />
+      </aside>
+      <main className="content-area">
+        <header className="topbar">
+          <button className="icon-button menu-trigger" onClick={() => setMobileNav(true)} aria-label="メニューを開く"><Menu size={20} /></button>
+          <div className="breadcrumbs"><span>OPERATIONS</span><b>/</b><strong>設定</strong></div>
+          <div className="topbar-meta"><span className="live-indicator"><i /> LIVE</span><span className="topbar-divider" /><span className="muted">17 Sep 2026, 14:32 JST</span></div>
+        </header>
+        <div className="page-content">
+          <div className="page-heading">
+            <div><p className="eyebrow">CONFIGURATION / 04</p><h1>設定</h1>{settingsDescription && <p className="muted">{settingsDescription}</p>}</div>
+            <button className="primary-button" onClick={save} disabled={busy || changed.length === 0}><Save size={15} /> {busy ? "保存中..." : "変更を保存"}</button>
+          </div>
+          <div className={`notice-bar ${changed.length ? "notice-warning" : ""}`}><span className="notice-icon">{changed.length ? <FileCog size={14} /> : <Check size={14} />}</span><span>{notice}</span></div>
+          <section className="settings-layout panel">
+            <div className="settings-tabs" role="tablist">
+              {categories.map((category) => {
+                const hasChanges = category.values.some((setting) => draft[setting.key] !== undefined && !valuesEqual(setting, draft[setting.key], setting.value));
+                return <button key={category.category} className={activeCategory === category.category ? "active" : ""} onClick={() => setActiveCategory(category.category)} role="tab">{labels[category.category] ?? category.category}{hasChanges && <span className="settings-tab-indicator" aria-label="未保存の変更あり" />}</button>;
+              })}
+            </div>
+            <div className="settings-form">
+              {active && <>
+                <div className="settings-form-heading">
+                  <h2>{labels[active.category] ?? active.category}</h2>
+                  <button type="button" className="setting-reset-button setting-reset-category" onClick={() => resetSettings(active.values)} disabled={busy || active.values.every(isAtDefault)} aria-label={`${labels[active.category] ?? active.category}の設定を既定値に戻す`} title={`${labels[active.category] ?? active.category}の設定を既定値に戻す`}><RotateCcw size={13} aria-hidden="true" /><span>カテゴリを既定値に戻す</span></button>
+                </div>
+                {renderGroups(active.values)}
+              </>}
+            </div>
+          </section>
+          <div className="settings-footer"><span><Check size={14} /> compose.yml は変更しません</span><span>{changed.length} 件の未保存変更</span></div>
+        </div>
+      </main>
+    </div>
+  );
 }

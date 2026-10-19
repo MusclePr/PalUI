@@ -111,6 +111,18 @@ test("settings API restricts compose settings to admins", async () => {
     const missingOrigin = await POST(request("operator", "POST", { values: {}, expectedHash: savedOperatorSettings.hash }, null));
     assert.equal(missingOrigin.status, 403);
 
+    const updateOnBootDefault = operatorSettings.categories.find((category) => category.category === "system").values.find((setting) => setting.key === "UPDATE_ON_BOOT").defaultValue;
+    const resetToDefault = await POST(request("operator", "POST", {
+      values: { UPDATE_ON_BOOT: updateOnBootDefault },
+      expectedHash: savedOperatorSettings.hash,
+    }));
+    assert.equal(resetToDefault.status, 200);
+    const resetSettings = await resetToDefault.json();
+    const resetSetting = resetSettings.categories.find((category) => category.category === "system").values.find((setting) => setting.key === "UPDATE_ON_BOOT");
+    assert.equal(resetSetting.value, updateOnBootDefault);
+    assert.equal(resetSetting.overridden, false);
+    assert.equal(await readFile(join(settingsRoot, "override.env"), "utf8"), "");
+
     const adminSettings = await GET(request("admin"));
     assert.equal(adminSettings.status, 200);
     const adminData = await adminSettings.json();

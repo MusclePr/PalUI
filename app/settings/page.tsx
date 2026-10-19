@@ -40,6 +40,7 @@ export default function SettingsPage() {
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const [notice, setNotice] = useState("設定ファイルを読み込んでいます...");
   const [busy, setBusy] = useState(false);
+  const [pendingReset, setPendingReset] = useState<{ settings: Setting[]; label: string } | null>(null);
 
   useEffect(() => {
     fetch(`${basePath}/api/settings`).then((response) => {
@@ -86,6 +87,12 @@ export default function SettingsPage() {
     setNotice(hasChangesAfterReset ? "未保存の変更があります" : "設定は最新です");
   }
 
+  function confirmReset() {
+    if (!pendingReset) return;
+    resetSettings(pendingReset.settings);
+    setPendingReset(null);
+  }
+
   async function save() {
     setBusy(true);
     const values = Object.fromEntries(changed.map((setting) => [setting.key, draft[setting.key] ?? setting.value]));
@@ -111,7 +118,7 @@ export default function SettingsPage() {
       <span className="setting-label">
         <span className="setting-label-line">
           <strong>{label}</strong>
-          <button type="button" className="setting-reset-button setting-reset-item" onClick={() => resetSettings([setting])} disabled={busy || isAtDefault(setting)} aria-label={`${label}を既定値に戻す`} title="既定値に戻す"><RotateCcw size={13} aria-hidden="true" /></button>
+          <button type="button" className="setting-reset-button setting-reset-item" onClick={() => setPendingReset({ settings: [setting], label })} disabled={busy || isAtDefault(setting)} aria-label={`${label}を既定値に戻す`} title="既定値に戻す"><RotateCcw size={13} aria-hidden="true" /></button>
         </span>
         <small>{setting.description || (isChanged ? `既定値: ${setting.defaultValue}` : "既定値")}</small>
       </span>
@@ -127,7 +134,7 @@ export default function SettingsPage() {
       return <fieldset className={`settings-group ${group.collapsible ? "is-collapsible" : ""}`} key={key}>
         <legend>{group.collapsible ? <span className="settings-group-heading">
           <button type="button" className="settings-group-toggle" aria-expanded={expanded} aria-controls={contentId} onClick={() => setExpandedSections((current) => ({ ...current, [key]: !expanded }))}>{expanded ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}<span>{group.heading}</span><small>{expanded ? "表示中" : "非表示"}</small></button>
-          <button type="button" className="setting-reset-button setting-reset-section" onClick={() => resetSettings(group.settings)} disabled={busy || group.settings.every(isAtDefault)} aria-label={`${group.heading}を既定値に戻す`} title={`${group.heading}を既定値に戻す`}><RotateCcw size={12} aria-hidden="true" /><span>戻す</span></button>
+          <button type="button" className="setting-reset-button setting-reset-section" onClick={() => setPendingReset({ settings: group.settings, label: group.heading })} disabled={busy || group.settings.every(isAtDefault)} aria-label={`${group.heading}を既定値に戻す`} title={`${group.heading}を既定値に戻す`}><RotateCcw size={12} aria-hidden="true" /><span>戻す</span></button>
         </span> : group.heading}</legend>
         <div id={group.collapsible ? contentId : undefined} hidden={!expanded}>{group.settings.map(renderSetting)}</div>
       </fieldset>;
@@ -171,7 +178,7 @@ export default function SettingsPage() {
               {active && <>
                 <div className="settings-form-heading">
                   <h2>{labels[active.category] ?? active.category}</h2>
-                  <button type="button" className="setting-reset-button setting-reset-category" onClick={() => resetSettings(active.values)} disabled={busy || active.values.every(isAtDefault)} aria-label={`${labels[active.category] ?? active.category}の設定を既定値に戻す`} title={`${labels[active.category] ?? active.category}の設定を既定値に戻す`}><RotateCcw size={13} aria-hidden="true" /><span>カテゴリを既定値に戻す</span></button>
+                  <button type="button" className="setting-reset-button setting-reset-category" onClick={() => setPendingReset({ settings: active.values, label: labels[active.category] ?? active.category })} disabled={busy || active.values.every(isAtDefault)} aria-label={`${labels[active.category] ?? active.category}の設定を既定値に戻す`} title={`${labels[active.category] ?? active.category}の設定を既定値に戻す`}><RotateCcw size={13} aria-hidden="true" /><span>カテゴリを既定値に戻す</span></button>
                 </div>
                 {renderGroups(active.values)}
               </>}
@@ -180,6 +187,7 @@ export default function SettingsPage() {
           <div className="settings-footer"><span><Check size={14} /> compose.yml は変更しません</span><span>{changed.length} 件の未保存変更</span></div>
         </div>
       </main>
+      {pendingReset && <div className="dialog-backdrop" role="presentation" onClick={() => setPendingReset(null)}><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="reset-confirm-title" onClick={(event) => event.stopPropagation()}><div className="dialog-icon"><RotateCcw size={20} aria-hidden="true" /></div><p className="eyebrow">RESET SETTINGS</p><h2 id="reset-confirm-title">設定を既定値に戻す</h2><p className="muted">対象: <strong>{pendingReset.label}</strong><br />選択した設定を既定値に戻します。変更は「変更を保存」を押すまで反映されません。</p><div className="dialog-actions"><button type="button" className="secondary-button" onClick={() => setPendingReset(null)}>キャンセル</button><button type="button" className="primary-button" onClick={confirmReset}>既定値に戻す</button></div></section></div>}
     </div>
   );
 }

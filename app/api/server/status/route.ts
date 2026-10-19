@@ -14,7 +14,8 @@ export async function GET(request: Request) {
       { serverStatus: await readPalworldStatus() },
       { headers: { "Cache-Control": "no-store" } },
     );
-  } catch {
+  } catch (error) {
+    console.error("サーバー状態ファイルを読み込めませんでした", error);
     return NextResponse.json({ error: "サーバー状態を取得できませんでした" }, { status: 503 });
   }
 }

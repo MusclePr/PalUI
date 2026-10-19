@@ -16,13 +16,16 @@ export async function GET(request: Request) {
   const cachedDashboard = await readDashboardCache();
   try {
     const container = await readComposeServiceSnapshot("pal");
+    const serverStatusRequest = container.state === "running" || container.state === "starting" || container.state === "unknown"
+      ? readPalworldStatus().catch((error) => {
+          console.warn("Palworldの状態ファイルを読み込めませんでした", error);
+          return null;
+        })
+      : Promise.resolve(null);
     const [overview, settings, serverStatus] = await Promise.all([
       readPalworldOverview(container.state === "running"),
       readSettings(),
-      readPalworldStatus().catch((error) => {
-        console.warn("Palworldの状態ファイルを読み込めませんでした", error);
-        return null;
-      }),
+      serverStatusRequest,
     ]);
     const autoPauseSetting = settings.categories.find((category) => category.category === "system")?.values.find((setting) => setting.key === "AUTO_PAUSE_ENABLED");
     const autoPauseEnabled = autoPauseSetting ? autoPauseSetting.value.toLowerCase() === "true" : null;

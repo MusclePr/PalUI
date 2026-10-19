@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { readApiRole } from "../../../../lib/server/api-auth";
-import { composeCommand, isComposeService } from "../../../../lib/server/compose";
+import { composeCommand, hasComposeServiceContainer, isComposeService } from "../../../../lib/server/compose";
 import { createLogStreamResponse } from "../../../../lib/server/log-stream";
 
 export const runtime = "nodejs";
@@ -13,6 +13,10 @@ export async function GET(request: Request) {
   const service = new URL(request.url).searchParams.get("service");
   if (!isComposeService(service)) {
     return NextResponse.json({ error: "対象サービスが不正です" }, { status: 400 });
+  }
+
+  if (!await hasComposeServiceContainer(service)) {
+    return new Response(null, { status: 204 });
   }
 
   const command = composeCommand(["logs", "--follow", "--tail", "100", "--timestamps", "--no-log-prefix", service]);

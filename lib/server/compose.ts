@@ -170,6 +170,15 @@ function parseJsonLines(output: string): Record<string, unknown>[] {
   }
 }
 
+async function readComposeServiceContainers(service: ComposeService) {
+  const { stdout } = await runCompose(["ps", "--all", "--format", "json", service], 15_000);
+  return parseJsonLines(stdout);
+}
+
+export async function hasComposeServiceContainer(service: ComposeService) {
+  return (await readComposeServiceContainers(service)).length > 0;
+}
+
 function parseMemoryBytes(value: unknown) {
   if (typeof value !== "string") return null;
   const match = value.trim().match(/^([\d.]+)\s*([kmgt]?i?b)$/i);
@@ -211,8 +220,7 @@ function emptySnapshot(service: ComposeService, state: ComposeServiceState): Com
 }
 
 export async function readComposeServiceSnapshot(service: ComposeService): Promise<ComposeServiceSnapshot> {
-  const { stdout } = await runCompose(["ps", "--all", "--format", "json", service], 15_000);
-  const [container] = parseJsonLines(stdout);
+  const [container] = await readComposeServiceContainers(service);
   if (!container) {
     if (service === "pal") {
       palReadinessCacheKey = null;

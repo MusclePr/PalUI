@@ -40,7 +40,7 @@ function readCachedEntries(value: unknown, nextId: { current: number }): LogEntr
 }
 
 function streamStateLabel(state: StreamState) {
-  return { connecting: "接続中", connected: "LIVE", reconnecting: "再接続中", disconnected: "停止・切断" }[state];
+  return { connecting: "接続中", connected: "LIVE", reconnecting: "再接続中", disconnected: "切断中" }[state];
 }
 
 function isLogService(value: unknown): value is LogService {
@@ -117,7 +117,9 @@ export function LiveLogDock({ lifecycleReconnectRequest }: { lifecycleReconnectR
     setStreamState("connecting");
     const source = new EventSource(`${basePath}/api/server/logs?service=${service}`);
     source.onopen = () => setStreamState("connected");
-    source.onerror = () => setStreamState("reconnecting");
+    source.onerror = () => {
+      setStreamState(source.readyState === EventSource.CLOSED ? "disconnected" : "reconnecting");
+    };
     source.addEventListener("log", (event) => {
       try {
         const message = JSON.parse((event as MessageEvent<string>).data) as StreamMessage;

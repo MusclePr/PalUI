@@ -245,6 +245,7 @@ export default function DashboardClient({ initialDashboardCache, initialServerSt
   );
   const serverPaused = serverStatus ? serverStatus.status === "paused" : paused;
   const progress = serverStatus?.progress ?? null;
+  const shouldPollServerStatus = container?.state === "running" || container?.state === "starting" || container?.state === "unknown";
 
   const stateMeta = {
     running: { label: "起動完了", icon: Check, className: "success" },
@@ -337,6 +338,7 @@ export default function DashboardClient({ initialDashboardCache, initialServerSt
   }, [progress, snapshotLoaded]);
 
   useEffect(() => {
+    if (!shouldPollServerStatus) return;
     let active = true;
     let inFlight = false;
     const controller = new AbortController();
@@ -369,7 +371,7 @@ export default function DashboardClient({ initialDashboardCache, initialServerSt
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, []);
+  }, [shouldPollServerStatus]);
 
   useEffect(() => {
     let active = true;

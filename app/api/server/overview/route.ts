@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isSameOriginRequest, readApiRole } from "../../../../lib/server/api-auth";
-import { readComposeServiceSnapshot } from "../../../../lib/server/compose";
+import { readComposeServiceSnapshot, readPalworldStatus } from "../../../../lib/server/compose";
 import { readDashboardCache, updateDashboardCache } from "../../../../lib/server/dashboard-cache";
 import { readPalworldOverview, readSettings, setAutoPause } from "../../../../lib/server/palworld";
 
@@ -16,10 +16,17 @@ export async function GET(request: Request) {
   const cachedDashboard = await readDashboardCache();
   try {
     const container = await readComposeServiceSnapshot("pal");
-    const [overview, settings] = await Promise.all([
+    const [overview, settings, serverStatus] = await Promise.all([
       readPalworldOverview(container.state === "running"),
       readSettings(),
+      readPalworldStatus().catch((error) => {
+        console.warn("Palworldの状態ファイルを読み込めませんでした", error);
+        return null;
+      }),
     ]);
+    const autoPauseSetting = settings.categories.find((category) => category.category === "system")?.values.find((setting) => setting.key === "AUTO_PAUSE_ENABLED");
+    const autoPauseEnabled = autoPauseSetting ? autoPauseSetting.value.toLowerCase() === "true" : null;
+    const observedAt = new Date().toISOString();
     const cacheUpdates = {
       ...(overview.info ? {
         version: overview.info.version,
@@ -27,30 +34,50 @@ export async function GET(request: Request) {
         description: overview.info.description,
       } : {}),
       ...(overview.metrics ? { days: overview.metrics.days } : {}),
+      snapshot: {
+        container: { ...container, service: "pal" as const },
+        serverStatus,
+        paused: overview.paused,
+        autoPauseEnabled,
+        metrics: overview.metrics,
+        lastRefreshAt: observedAt,
+        lastStatsAt: container.cpuPercent !== null || container.memoryUsageBytes !== null ? observedAt : null,
+        lastMetricsAt: overview.metrics ? observedAt : null,
+      },
     };
-    const dashboardCache = Object.keys(cacheUpdates).length > 0
-      ? await updateDashboardCache(cacheUpdates).catch(() => readDashboardCache())
-      : await readDashboardCache();
-    const autoPauseSetting = settings.categories.find((category) => category.category === "system")?.values.find((setting) => setting.key === "AUTO_PAUSE_ENABLED");
+    const dashboardCache = await updateDashboardCache(cacheUpdates).catch((error) => {
+      console.warn("ダッシュボードのキャッシュを更新できませんでした", error);
+      return readDashboardCache();
+    });
     return NextResponse.json({
       ...overview,
       dashboardCache,
-      autoPauseEnabled: autoPauseSetting ? autoPauseSetting.value.toLowerCase() === "true" : null,
-      container,
+      autoPauseEnabled: autoPauseEnabled ?? dashboardCache.snapshot?.autoPauseEnabled ?? null,
+      container: dashboardCache.snapshot?.container ?? container,
+      serverStatus: serverStatus ?? (container.state === "unknown" ? dashboardCache.snapshot?.serverStatus : null) ?? null,
+      metrics: overview.metrics ?? dashboardCache.snapshot?.metrics ?? null,
+      lastRefreshAt: dashboardCache.snapshot?.lastRefreshAt ?? observedAt,
+      lastStatsAt: dashboardCache.snapshot?.lastStatsAt ?? null,
+      lastMetricsAt: dashboardCache.snapshot?.lastMetricsAt ?? null,
     });
   } catch {
     const paused = await readPalworldOverview(false).then((overview) => overview.paused).catch(() => false);
+    const snapshot = cachedDashboard.snapshot;
     return NextResponse.json({
       paused,
       info: null,
-      metrics: null,
+      metrics: snapshot?.metrics ?? null,
+      serverStatus: snapshot?.serverStatus ?? null,
       errors: {
         info: "Palworld サーバーへ接続できませんでした",
         metrics: "Palworld サーバーへ接続できませんでした",
       },
       dashboardCache: cachedDashboard,
-      autoPauseEnabled: null,
-      container: {
+      autoPauseEnabled: snapshot?.autoPauseEnabled ?? null,
+      lastRefreshAt: snapshot?.lastRefreshAt ?? cachedDashboard.updatedAt,
+      lastStatsAt: snapshot?.lastStatsAt ?? null,
+      lastMetricsAt: snapshot?.lastMetricsAt ?? null,
+      container: snapshot?.container ?? {
         service: "pal",
         state: "unknown",
         name: null,

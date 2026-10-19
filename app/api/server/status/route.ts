@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { readApiRole } from "../../../../lib/server/api-auth";
-import { readPalworldStatus } from "../../../../lib/server/compose";
+import { isPalworldPaused, readPalworldStatus } from "../../../../lib/server/compose";
 
 export const runtime = "nodejs";
 
@@ -10,12 +10,13 @@ export async function GET(request: Request) {
   }
 
   try {
+    const [serverStatus, paused] = await Promise.all([readPalworldStatus(), isPalworldPaused()]);
     return NextResponse.json(
-      { serverStatus: await readPalworldStatus() },
+      { serverStatus, paused },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
-    console.error("サーバー状態ファイルを読み込めませんでした", error);
+    console.error("サーバー状態を読み込めませんでした", error);
     return NextResponse.json({ error: "サーバー状態を取得できませんでした" }, { status: 503 });
   }
 }

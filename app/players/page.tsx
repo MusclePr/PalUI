@@ -8,6 +8,7 @@ import {
 import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { SidebarFooter } from "../components/SidebarFooter";
+import { ServerStatusIndicator } from "../components/ServerStatusIndicator";
 import { buildPlayerRows, playerRowKey, type Player, type RegisteredPlayer } from "./player-rows";
 
 type DetectedPlayer = {
@@ -237,7 +238,7 @@ export default function PlayersPage() {
     <div className="app-shell">
       <aside className={`sidebar ${mobileNav ? "is-open" : ""}`}>
         <div className="sidebar-header"><div className="brand-mark"><TerminalSquare size={19} /> PALUI</div><button className="icon-button mobile-close" onClick={() => setMobileNav(false)} aria-label="メニューを閉じる"><X size={18} /></button></div>
-        <div className="server-selector"><span className="signal-dot" /><div><small>MANAGED SERVER</small><strong>palworld-server</strong></div></div>
+        <div className="server-selector"><ServerStatusIndicator /><div><small>MANAGED SERVER</small><strong>palworld-server</strong></div></div>
         <nav className="main-nav" aria-label="メインナビゲーション"><p className="nav-label">OPERATIONS</p>{navItems.map(({ label, icon: Icon, href, active }) => <a href={href === "#" ? "#" : `${basePath}${href}`} className={active ? "active" : ""} key={label} onClick={href === "#" ? (event) => event.preventDefault() : undefined}><Icon size={17} /> {label}{active && <span className="nav-pip" />}</a>)}</nav>
         <SidebarFooter />
       </aside>

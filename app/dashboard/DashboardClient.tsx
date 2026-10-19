@@ -1,14 +1,15 @@
 "use client";
 
 import {
-  AlertTriangle, Check, ChevronDown, CircleStop, Cpu, Database, Gauge, HardDrive,
-  LayoutDashboard, Menu, Moon, Pause, Play, RefreshCw, Server, Settings, Users, X,
+  AlertTriangle, Check, CircleStop, Cpu, Database, Gauge, HardDrive,
+  LayoutDashboard, Menu, Moon, Pause, Play, RefreshCw, Server, Settings, TerminalSquare, Users, X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { LiveLogDock } from "../components/LiveLogDock";
 import { SidebarFooter } from "../components/SidebarFooter";
+import { ServerStatusIndicator, type ServerIndicatorState } from "../components/ServerStatusIndicator";
 
-type ServerState = "running" | "sleeping" | "paused" | "updating" | "stopped" | "starting" | "stopping" | "not_created" | "unknown";
+type ServerState = ServerIndicatorState;
 type ContainerState = "not_created" | "running" | "stopped" | "starting" | "unknown";
 type PalworldServerStatus = { status: Exclude<ServerState, "sleeping" | "not_created" | "unknown">; progress: number };
 type LifecycleAction = "start" | "stop" | "restart";
@@ -506,8 +507,8 @@ export default function DashboardClient({ initialDashboardCache, initialServerSt
   return (
     <div className="app-shell dashboard-shell">
       <aside className={`sidebar ${mobileNav ? "is-open" : ""}`}>
-        <div className="sidebar-header"><div className="brand-mark"><TerminalIcon /> PALUI</div><button className="icon-button mobile-close" onClick={() => setMobileNav(false)} aria-label="メニューを閉じる"><X size={18} /></button></div>
-        <div className="server-selector"><span className={`signal-dot ${serverState === "running" ? "" : "is-idle"}`} /><div><small>MONITORED SERVICE</small><strong>pal</strong></div><ChevronDown size={15} /></div>
+        <div className="sidebar-header"><div className="brand-mark"><TerminalSquare size={19} /> PALUI</div><button className="icon-button mobile-close" onClick={() => setMobileNav(false)} aria-label="メニューを閉じる"><X size={18} /></button></div>
+        <div className="server-selector"><ServerStatusIndicator state={serverState} /><div><small>MANAGED SERVER</small><strong>palworld-server</strong></div></div>
         <nav className="main-nav" aria-label="メインナビゲーション">
           <p className="nav-label">OPERATIONS</p>
           {navItems.map(({ label, icon: Icon, href, active }) => <a href={href ? `${basePath}${href}` : "#"} className={active ? "active" : ""} key={label} onClick={href ? undefined : (event) => event.preventDefault()}><Icon size={17} /> {label}{active && <span className="nav-pip" />}</a>)}
@@ -574,7 +575,6 @@ export default function DashboardClient({ initialDashboardCache, initialServerSt
   );
 }
 
-function TerminalIcon() { return <span className="terminal-icon"><span />_</span>; }
 function isPalworldServerStatus(value: unknown): value is PalworldServerStatus {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const status = (value as { status?: unknown }).status;

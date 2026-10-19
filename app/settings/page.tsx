@@ -3,6 +3,7 @@
 import { Check, ChevronDown, ChevronRight, Database, Eye, EyeOff, FileCog, LayoutDashboard, Menu, RotateCcw, Save, Settings, TerminalSquare, Users, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { SidebarFooter } from "../components/SidebarFooter";
+import { ServerStatusIndicator } from "../components/ServerStatusIndicator";
 
 type Setting = { key: string; value: string; defaultValue: string; overridden: boolean; secret: boolean; label: string; description: string; type: string; heading?: string; collapsible?: boolean; section?: number; min?: number; max?: number; options?: string[] };
 type Category = { category: string; values: Setting[] };
@@ -148,7 +149,7 @@ export default function SettingsPage() {
           <div className="brand-mark"><TerminalSquare size={19} /> PALUI</div>
           <button className="icon-button mobile-close" onClick={() => setMobileNav(false)} aria-label="メニューを閉じる"><X size={18} /></button>
         </div>
-        <div className="server-selector"><span className="signal-dot" /><div><small>MANAGED SERVER</small><strong>palworld-server</strong></div></div>
+        <div className="server-selector"><ServerStatusIndicator /><div><small>MANAGED SERVER</small><strong>palworld-server</strong></div></div>
         <nav className="main-nav" aria-label="メインナビゲーション">
           <p className="nav-label">OPERATIONS</p>
           {navItems.map(({ label, icon: Icon, href, active }) => <a href={`${basePath}${href}`} className={active ? "active" : ""} key={label}><Icon size={17} /> {label}{active && <span className="nav-pip" />}</a>)}

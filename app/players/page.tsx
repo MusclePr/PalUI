@@ -325,7 +325,7 @@ export default function PlayersPage() {
             <div className="panel whitelist-panel">
               <div className="panel-heading"><div><p className="eyebrow">PLAYER REGISTRATION</p><h3>プレイヤー登録</h3></div><UserPlus size={18} className="muted-icon" /></div>
               <form className="registration-form" onSubmit={registerPlayer}>
-                <label>名前<input value={registration.name} onChange={(event) => setRegistration({ ...registration, name: event.target.value })} placeholder="Sakura_A" required /></label>
+                <label>名前<input value={registration.name} onChange={(event) => setRegistration({ ...registration, name: event.target.value })} placeholder="Muscle" required /></label>
                 <label>ユーザーID<input value={registration.userId} onChange={(event) => setRegistration({ ...registration, userId: event.target.value })} placeholder="steam_76561198847285114" pattern="[-_a-zA-Z0-9:.]+" required /></label>
                 <label className="registration-check"><input type="checkbox" checked={registration.enabled} onChange={(event) => setRegistration({ ...registration, enabled: event.target.checked })} /> ホワイトリストに登録</label>
                 <div className="registration-actions"><button className="primary-button" type="submit" disabled={!registration.name.trim() || !registration.userId.trim()}><UserPlus size={15} /> 登録する</button><button className="secondary-button detect-button" type="button" onClick={openDetectDialog}><UserSearch size={15} /> 未登録プレイヤーの検出</button></div>

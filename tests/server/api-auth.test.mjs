@@ -11,6 +11,35 @@ import ts from "typescript";
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
+    if (specifier === "next/server") {
+      const source = `
+        function withCookies(response) {
+          Object.defineProperty(response, "cookies", {
+            value: {
+              set(name, value, options = {}) {
+                const attributes = [
+                  options.httpOnly ? "HttpOnly" : "",
+                  options.secure ? "Secure" : "",
+                  options.sameSite ? "SameSite=" + options.sameSite : "",
+                  options.maxAge ? "Max-Age=" + options.maxAge : "",
+                  options.path ? "Path=" + options.path : "",
+                ].filter(Boolean).join("; ");
+                response.headers.append("Set-Cookie", name + "=" + value + "; " + attributes);
+              },
+            },
+          });
+          return response;
+        }
+        export const NextResponse = {
+          json: (body, init) => withCookies(Response.json(body, init)),
+          redirect: (url, init = {}) => withCookies(new Response(null, {
+            status: init.status ?? 307,
+            headers: { location: String(url) },
+          })),
+        };
+      `;
+      return { url: `data:text/javascript,${encodeURIComponent(source)}`, shortCircuit: true };
+    }
     if (specifier.startsWith(".") && !/\.[a-z]+$/i.test(specifier)) {
       for (const extension of [".ts", ".js"]) {
         const url = new URL(`${specifier}${extension}`, context.parentURL);
@@ -76,6 +105,58 @@ test("password setup saves plain env values and authenticates each role", async 
   assert.doesNotMatch(content, /PASSWORD_HASH/);
   await assert.rejects(readFile(join(settingsRoot, ".passwd")), { code: "ENOENT" });
   await assert.rejects(setupPasswords("again", "again"), /既に設定されています/);
+});
+
+test("login route accepts browser form credentials and preserves JSON clients", async () => {
+  const { POST } = await import("../../app/api/auth/login/route.ts");
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "/palui";
+  const formRequest = (values, origin = "http://palui") => new Request("http://palui/api/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", host: "palui", origin },
+    body: new URLSearchParams(values),
+  });
+
+  for (const [username, password] of [["admin", "adminPasswordHere"], ["operator", "b"]]) {
+    const response = await POST(formRequest({ username, password }));
+    assert.equal(response.status, 303);
+    assert.equal(new URL(response.headers.get("location")).pathname, `${basePath}/dashboard`);
+    assert.match(response.headers.get("set-cookie") ?? "", /^palui_session=/);
+  }
+
+  const invalidResponse = await POST(formRequest({ username: "admin", password: "wrong" }));
+  assert.equal(invalidResponse.status, 303);
+  const invalidUrl = new URL(invalidResponse.headers.get("location"));
+  assert.equal(invalidUrl.pathname, `${basePath}/login`);
+  assert.equal(invalidUrl.searchParams.get("authNotice"), "invalid-credentials");
+  assert.deepEqual([...invalidUrl.searchParams.keys()], ["authNotice"]);
+
+  const missingPasswordResponse = await POST(formRequest({ username: "admin" }));
+  assert.equal(missingPasswordResponse.status, 303);
+  assert.equal(new URL(missingPasswordResponse.headers.get("location")).searchParams.get("authNotice"), "invalid-credentials");
+
+  const crossOriginResponse = await POST(formRequest({ username: "admin", password: "adminPasswordHere" }, "https://attacker.example"));
+  assert.equal(crossOriginResponse.status, 403);
+
+  const proxiedRequest = new Request("http://palui:3000/api/auth/login", {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      host: "palui:3000",
+      origin: "https://pal.example",
+      "x-forwarded-host": "pal.example",
+      "x-forwarded-proto": "https",
+    },
+    body: new URLSearchParams({ username: "operator", password: "b" }),
+  });
+  assert.equal((await POST(proxiedRequest)).status, 303);
+
+  const jsonResponse = await POST(new Request("http://palui/api/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ account: "operator", password: "b" }),
+  }));
+  assert.equal(jsonResponse.status, 200);
+  assert.deepEqual(await jsonResponse.json(), { role: "operator" });
 });
 
 test("API sessions require a valid signed role and expiry", () => {

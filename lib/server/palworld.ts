@@ -7,10 +7,11 @@ import { promisify } from "node:util";
 import { parse as parseDotenv } from "dotenv";
 import * as tar from "tar";
 import { isPalworldPaused, PalworldPausedError, readComposeServiceSnapshot, resumePalworldIfPaused, runCompose, runPalworldBackupCommand, runPalworldCommand, runPalworldRconCommand, withComposeOperation } from "./compose";
+import { PlayersCacheFormatError, readPlayersCache, withPlayersLock, writePlayersCache } from "./players-cache";
 
 const execFileAsync = promisify(execFile);
-const whitelistFile = "/server/palworld/Pal/Binaries/Win64/PalDefender/WhiteList.json";
 const settingsRoot = process.env.PALUI_SERVER_DIR ?? (existsSync("/server") ? "/server" : `${process.cwd()}/palui/server`);
+const whitelistFile = `${settingsRoot}/palworld/Pal/Binaries/Win64/PalDefender/WhiteList.json`;
 const palworldDirectory = `${settingsRoot}/palworld`;
 const backupDirectory = `${palworldDirectory}/backups`;
 const registeredPlayersFile = `${settingsRoot}/players.json`;
@@ -101,17 +102,9 @@ export class BackupError extends Error {
   }
 }
 
-type CachedPlayers = { players: PalworldPlayer[]; updatedAt: string };
-let onlinePlayersCache: CachedPlayers | null = null;
-
 async function execPalworldCli(command: "info" | "metrics") {
   // コマンド名と引数は固定し、利用者入力を Docker exec の引数へ渡さない。
   const result = await runPalworldCommand(["rest-cli", command]);
-  return JSON.parse(result.stdout) as unknown;
-}
-
-async function execPlayers() {
-  const result = await runPalworldCommand(["rest-cli", "players"]);
   return JSON.parse(result.stdout) as unknown;
 }
 
@@ -120,26 +113,6 @@ async function execContainerCommand(command: "save" | "backup" | "restore", argu
   const args: string[] = [command];
   if (argument) args.push(argument);
   return runPalworldCommand(args, 60_000);
-}
-
-function normalizePlayers(value: unknown): PalworldPlayer[] {
-  const source = Array.isArray(value) ? value : (value as { players?: unknown[] } | null)?.players;
-  if (!Array.isArray(source)) return [];
-  return source.map((player) => {
-    const item = player as Record<string, unknown>;
-    return {
-      name: String(item.name ?? "Unknown player"),
-      accountName: String(item.accountName ?? ""),
-      playerId: String(item.playerId ?? item.player_id ?? ""),
-      userId: String(item.userId ?? item.user_id ?? ""),
-      ip: String(item.ip ?? ""),
-      ping: Number(item.ping ?? 0),
-      buildingCount: Number(item.buildingCount ?? item.building_count ?? 0),
-      level: Number(item.level ?? 0),
-      lastLogin: typeof (item.lastLogin ?? item.last_login) === "string" ? String(item.lastLogin ?? item.last_login) : null,
-      banned: item.banned === true,
-    };
-  }).filter((player) => player.playerId.length > 0);
 }
 
 function assertUserId(userId: string) {
@@ -201,27 +174,58 @@ function normalizeRegisteredPlayers(value: unknown): RegisteredPlayer[] {
   return [...playersByUserId.values()];
 }
 
+const registeredPlayerVersions = new WeakMap<RegisteredPlayer[], string | null>();
+
 async function readRegisteredPlayers() {
   try {
-    return normalizeRegisteredPlayers(JSON.parse(await readFile(registeredPlayersFile, "utf8")) as unknown);
-  } catch {
-    return [];
+    const contents = await readFile(registeredPlayersFile, "utf8");
+    const value: unknown = JSON.parse(contents);
+    if (!Array.isArray(value)) throw new PlayerStoreError("players.json の形式が不正です", 503);
+    const players = normalizeRegisteredPlayers(value);
+    registeredPlayerVersions.set(players, contents);
+    return players;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const players: RegisteredPlayer[] = [];
+    registeredPlayerVersions.set(players, null);
+    return players;
   }
 }
 
-async function writeRegisteredPlayers(players: RegisteredPlayer[]) {
-  const temporaryFile = `${registeredPlayersFile}.tmp-${process.pid}`;
+async function writeRegisteredPlayers(players: RegisteredPlayer[], previous: RegisteredPlayer[]) {
+  const temporaryFile = `${registeredPlayersFile}.tmp-${process.pid}-${randomUUID()}`;
   const normalizedPlayers = normalizeRegisteredPlayers(players);
   await mkdir(settingsRoot, { recursive: true });
-  await writeFile(temporaryFile, `${JSON.stringify(normalizedPlayers, null, 2)}\n`, "utf8");
-  await rename(temporaryFile, registeredPlayersFile);
+  try {
+    const handle = await open(temporaryFile, "wx", 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify(normalizedPlayers, null, 2)}\n`, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    const current = await readFile(registeredPlayersFile, "utf8").catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (current !== registeredPlayerVersions.get(previous)) throw new PlayerStoreError("players.json が他の処理に変更されました。再試行してください", 409);
+    await rename(temporaryFile, registeredPlayersFile);
+  } finally {
+    await unlink(temporaryFile).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
 }
 
 async function readWhitelist(): Promise<string[]> {
   try {
     const value = JSON.parse(await readFile(whitelistFile, "utf8")) as unknown;
-    return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : [];
-  } catch {
+    if (!Array.isArray(value) || !value.every((id) => typeof id === "string")) {
+      throw new PlayerStoreError("WhiteList.json の形式が不正です", 503);
+    }
+    return [...new Set<string>(value)].sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return [];
   }
 }
@@ -240,29 +244,81 @@ async function execWhitelist(command: "whitelist_add" | "whitelist_remove", user
 async function updateRegisteredPlayerWhite(userId: string, enabled: boolean) {
   const players = await readRegisteredPlayers();
   if (!players.some((player) => player.userId === userId)) return;
-  await writeRegisteredPlayers(players.map((player) => player.userId === userId ? { ...player, white: enabled } : player));
+  await writeRegisteredPlayers(players.map((player) => player.userId === userId ? { ...player, white: enabled } : player), players);
 }
 
 export async function readPlayers() {
-  let paused = await isPalworldPaused();
+  const paused = await isPalworldPaused();
   const whitelist = await readWhitelist();
   const registeredPlayers = await readRegisteredPlayers();
-  let onlinePlayers = onlinePlayersCache?.players ?? [];
-  let source: "rest-cli" | "cache" | "players.json" = onlinePlayersCache ? "cache" : "players.json";
-  if (!paused) {
-    try {
-      onlinePlayers = normalizePlayers(await execPlayers());
-      onlinePlayersCache = { players: onlinePlayers, updatedAt: new Date().toISOString() };
-      source = "rest-cli";
-    } catch (error) {
-      if (error instanceof PalworldPausedError) paused = true;
-      // サーバー停止中も、最後に取得したオンライン情報をオフライン履歴として表示する。
-    }
-  }
-  return { onlinePlayers, registeredPlayers, whitelist, cachedAt: onlinePlayersCache?.updatedAt ?? null, paused, source };
+  const cache = await readPlayersCache();
+  return { ...cache, registeredPlayers, whitelist, paused, source: cache.cachedAt ? "cache" : "players.json" };
 }
 
-export async function updateWhitelist(userId: string, enabled: boolean) {
+export async function synchronizePlayers(onlinePlayers: PalworldPlayer[] | null, previous: PalworldPlayer[] | null, timestamp: string) {
+  return withPlayersLock(async () => {
+    const current = await readPlayersCache().catch((error: unknown) => {
+      if (!(error instanceof PlayersCacheFormatError) || onlinePlayers === null) throw error;
+      console.error("Replacing invalid player cache with a valid observation:", error.message);
+      return null;
+    });
+    if (onlinePlayers !== null) {
+      const whitelist = new Set(await readWhitelist());
+      const onlineById = new Map(onlinePlayers.filter((player) => player.userId).map((player) => [player.userId, player]));
+      const previousIds = new Set(previous?.map((player) => player.userId).filter(Boolean));
+      for (let attempt = 0; ; attempt++) {
+        const registered = await readRegisteredPlayers();
+        const registeredIds = new Set(registered.map((player) => player.userId));
+        const observed = new Map((previous ?? []).filter((player) => player.userId).map((player) => [player.userId, player]));
+        for (const [userId, player] of onlineById) observed.set(userId, player);
+        const discovered: RegisteredPlayer[] = [];
+        for (const [userId, player] of observed) {
+          if (!whitelist.has(userId) || registeredIds.has(userId)) continue;
+          const gameName = player.name.trim();
+          discovered.push({
+            userId,
+            displayName: gameName && !/[\u0000-\u001f\u007f]/.test(gameName) ? gameName : userId,
+            role: "メンバー",
+            white: true,
+            banned: false,
+            level: player.level,
+            firstLogin: onlineById.has(userId) ? timestamp : null,
+            lastLogin: null,
+          });
+        }
+        const next = [...registered, ...discovered].map((player) => {
+          const online = onlineById.get(player.userId);
+          if (online) {
+            const gameName = online.name.trim();
+            return {
+              ...player,
+              level: online.level,
+              displayName: whitelist.has(player.userId) && player.displayName === player.userId
+                && gameName && !/[\u0000-\u001f\u007f]/.test(gameName) ? gameName : player.displayName,
+            };
+          }
+          if (previousIds.has(player.userId)) return { ...player, lastLogin: timestamp };
+          return player;
+        });
+        if (JSON.stringify(next) === JSON.stringify(registered)) break;
+        try {
+          await writeRegisteredPlayers(next, registered);
+          break;
+        } catch (error) {
+          if (!(error instanceof PlayerStoreError) || error.status !== 409 || attempt >= 2) throw error;
+        }
+      }
+    }
+    const changed = onlinePlayers !== null && JSON.stringify(current?.onlinePlayers) !== JSON.stringify(onlinePlayers);
+    await writePlayersCache({
+      onlinePlayers: onlinePlayers ?? current?.onlinePlayers ?? [],
+      cachedAt: changed || (onlinePlayers !== null && !current?.cachedAt) ? timestamp : current?.cachedAt ?? null,
+      error: null,
+    }, current);
+  });
+}
+
+async function updateWhitelistUnlocked(userId: string, enabled: boolean) {
   assertUserId(userId);
   try {
     await resumePalworldIfPaused();
@@ -271,15 +327,15 @@ export async function updateWhitelist(userId: string, enabled: boolean) {
   }
   const whitelist = await readWhitelist();
   const next = enabled ? [...whitelist, userId] : whitelist.filter((id) => id !== userId);
-  await updateRegisteredPlayerWhite(userId, enabled);
   try {
     await execWhitelist(enabled ? "whitelist_add" : "whitelist_remove", userId);
   } catch (error) {
     if (error instanceof PalworldPausedError) throw new PlayerStoreError(error.message, 409);
     if (await isPalworldPaused()) throw new PlayerStoreError("AUTO PAUSEから復帰できなかったためRCONを実行できません", 503);
     // RCON を受け付けない状態では、仕様で定めたファイルを直接更新する。
-    try { await writeWhitelist(next); } catch { return { userId, enabled, whitelist: next }; }
+    await writeWhitelist(next);
   }
+  await updateRegisteredPlayerWhite(userId, enabled);
   return { userId, enabled, whitelist: await readWhitelist() };
 }
 
@@ -299,7 +355,7 @@ async function execWhitelistScript(args: string[]) {
   });
 }
 
-export async function detectUnregisteredPlayers(): Promise<DetectedPlayer[]> {
+async function detectUnregisteredPlayersUnlocked(): Promise<DetectedPlayer[]> {
   let stdout: string;
   try {
     stdout = (await execWhitelistScript([])).stdout.trim();
@@ -332,7 +388,7 @@ function sanitizeDetectedName(name: string, userId: string) {
   return cleaned || userId;
 }
 
-export async function registerDetectedPlayers(entries: { userId: string; displayName: string }[]) {
+async function registerDetectedPlayersUnlocked(entries: { userId: string; displayName: string }[]) {
   const results: DetectedRegistrationResult[] = [];
   // players.json への書き込み競合を避けるため逐次実行する
   for (const entry of entries) {
@@ -357,7 +413,7 @@ export async function registerDetectedPlayers(entries: { userId: string; display
   return { ...(await readPlayers()), results };
 }
 
-export async function addRegisteredPlayer(input: AddRegisteredPlayerInput) {
+async function addRegisteredPlayerUnlocked(input: AddRegisteredPlayerInput) {
   const userId = input.userId.trim();
   const displayName = input.displayName.trim();
   assertUserId(userId);
@@ -379,15 +435,15 @@ export async function addRegisteredPlayer(input: AddRegisteredPlayerInput) {
     white: input.enabled,
     banned: false,
     level: 1,
-    lastLogin: timestamp,
+    lastLogin: null,
     firstLogin: timestamp,
   }];
-  await writeRegisteredPlayers(nextPlayers);
-  if (input.enabled) await updateWhitelist(userId, true);
+  await writeRegisteredPlayers(nextPlayers, players);
+  if (input.enabled) await updateWhitelistUnlocked(userId, true);
   return await readPlayers();
 }
 
-export async function deleteRegisteredPlayer(userId: string) {
+async function deleteRegisteredPlayerUnlocked(userId: string) {
   const normalizedUserId = userId.trim();
   assertUserId(normalizedUserId);
   try {
@@ -397,9 +453,29 @@ export async function deleteRegisteredPlayer(userId: string) {
   }
   const players = await readRegisteredPlayers();
   if (!players.some((player) => player.userId === normalizedUserId)) throw new PlayerStoreError("登録済みユーザーが見つかりません", 404);
-  await writeRegisteredPlayers(players.filter((player) => player.userId !== normalizedUserId));
-  await updateWhitelist(normalizedUserId, false);
+  await writeRegisteredPlayers(players.filter((player) => player.userId !== normalizedUserId), players);
+  await updateWhitelistUnlocked(normalizedUserId, false);
   return await readPlayers();
+}
+
+export function updateWhitelist(userId: string, enabled: boolean) {
+  return withPlayersLock(() => updateWhitelistUnlocked(userId, enabled));
+}
+
+export function detectUnregisteredPlayers() {
+  return withPlayersLock(detectUnregisteredPlayersUnlocked);
+}
+
+export function registerDetectedPlayers(entries: { userId: string; displayName: string }[]) {
+  return withPlayersLock(() => registerDetectedPlayersUnlocked(entries));
+}
+
+export function addRegisteredPlayer(input: AddRegisteredPlayerInput) {
+  return withPlayersLock(() => addRegisteredPlayerUnlocked(input));
+}
+
+export function deleteRegisteredPlayer(userId: string) {
+  return withPlayersLock(() => deleteRegisteredPlayerUnlocked(userId));
 }
 
 export async function listBackups() {

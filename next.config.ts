@@ -5,6 +5,9 @@ const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "/palui";
 const nextConfig: NextConfig = {
   basePath,
   output: "standalone",
+  outputFileTracingExcludes: {
+    "/*": ["./palui/server/**/*"],
+  },
   async redirects() {
     return [
       // basePath を付けずにルートへアクセスした場合、basePath 配下へ転送する。

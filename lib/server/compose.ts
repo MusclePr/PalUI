@@ -179,6 +179,40 @@ export async function hasComposeServiceContainer(service: ComposeService) {
   return (await readComposeServiceContainers(service)).length > 0;
 }
 
+export async function readPlayerMonitorContainer(execute: ComposeExecutor = runCompose) {
+  const { stdout } = await execute(["ps", "--all", "--format", "json", "pal"], 8_000);
+  const trimmed = stdout.trim();
+  const parsed: unknown = !trimmed ? [] : trimmed.startsWith("[") ? JSON.parse(trimmed) : trimmed.split(/\r?\n/).map((line) => JSON.parse(line) as unknown);
+  if (!Array.isArray(parsed) || !parsed.every(isRecord)) throw new Error("コンテナ状態の応答形式が不正です");
+  const [container] = parsed;
+  if (!container) return { state: "stopped" as const, id: null };
+  if (container.State === "running") {
+    if (typeof container.ID !== "string" || !container.ID) throw new Error("コンテナIDを取得できませんでした");
+    return { state: "running" as const, id: container.ID };
+  }
+  if (["exited", "stopped", "dead", "created", "restarting", "paused"].includes(String(container.State))) {
+    return { state: "stopped" as const, id: null };
+  }
+  throw new Error("コンテナの稼働状態を取得できませんでした");
+}
+
+export async function readCachedProxyPlayers(execute: ComposeExecutor = runCompose): Promise<unknown | null> {
+  // Credentials are expanded only inside the container, never in Docker's arguments.
+  const script = [
+    'test "${API_PROXY_ENABLED:-true}" = true || exit 1',
+    'port="${API_PROXY_PORT:-8213}"',
+    'case "$port" in ""|*[!0-9]*) exit 1;; esac',
+    'test "$port" -gt 0 && test "$port" -le 65535 && test "$port" -ne 8212 || exit 1',
+    'curl --silent --show-error --max-time 4 --max-redirs 0 --user "admin:${ADMIN_PASSWORD:?}" --header "Cache-Control: only-if-cached" --write-out "\\n%{http_code}" "http://127.0.0.1:$port/v1/api/players"',
+  ].join("\n");
+  const { stdout } = await execute(["exec", "-T", "-u", "steam", "pal", "sh", "-ec", script], 8_000);
+  const separator = stdout.lastIndexOf("\n");
+  const status = stdout.slice(separator + 1).trim();
+  if (status === "504") return null;
+  if (status !== "200") throw new Error(`プレイヤーProxyの取得に失敗しました (HTTP ${status})`);
+  return JSON.parse(stdout.slice(0, separator)) as unknown;
+}
+
 function parseMemoryBytes(value: unknown) {
   if (typeof value !== "string") return null;
   const match = value.trim().match(/^([\d.]+)\s*([kmgt]?i?b)$/i);

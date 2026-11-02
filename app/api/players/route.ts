@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 import { authCookie, readSession } from "../../../lib/server/auth";
 import { addRegisteredPlayer, deleteRegisteredPlayer, detectUnregisteredPlayers, PlayerStoreError, readPlayers, registerDetectedPlayers, updateWhitelist } from "../../../lib/server/palworld";
 
@@ -16,7 +17,18 @@ function unauthorized() {
 
 export async function GET(request: Request) {
   if (!readRole(request)) return unauthorized();
-  return NextResponse.json(await readPlayers());
+  try {
+    const data = await readPlayers();
+    const etag = `"${createHash("sha256").update(JSON.stringify(data)).digest("hex")}"`;
+    const headers = { ETag: etag, "Cache-Control": "private, no-cache", Vary: "Cookie" };
+    if (request.headers.get("if-none-match")?.split(",").map((value) => value.trim()).includes(etag)) {
+      return new Response(null, { status: 304, headers });
+    }
+    return NextResponse.json(data, { headers });
+  } catch (error) {
+    console.error("Player data could not be read:", error instanceof Error ? error.message : "Unknown error");
+    return NextResponse.json({ error: "プレイヤー情報を読み込めませんでした" }, { status: 503 });
+  }
 }
 
 export async function POST(request: Request) {
@@ -46,6 +58,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "不正なプレイヤー操作です" }, { status: 400 });
   } catch (error) {
     if (error instanceof PlayerStoreError) return NextResponse.json({ error: error.message }, { status: error.status });
+    console.error("Player data could not be updated:", error instanceof Error ? error.message : "Unknown error");
     return NextResponse.json({ error: "プレイヤー情報を更新できませんでした" }, { status: 503 });
   }
 }

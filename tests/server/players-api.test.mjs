@@ -108,6 +108,27 @@ test("players API persists userId and ignores legacy identifier formats", async 
   assert.equal(savedAfterDuplicate.filter((player) => player.userId === "steam_duplicate").length, 1);
 });
 
+test("players GET supports private ETags, detects local file changes and authenticates before returning 304", async () => {
+  const headers = { cookie: sessionCookie() };
+  const first = await GET(new Request("http://palui/api/players", { headers }));
+  const etag = first.headers.get("etag");
+  assert.ok(etag);
+  assert.equal(first.headers.get("cache-control"), "private, no-cache");
+  assert.equal(first.headers.get("vary"), "Cookie");
+  const unchanged = await GET(new Request("http://palui/api/players", { headers: { ...headers, "if-none-match": etag } }));
+  assert.equal(unchanged.status, 304);
+  assert.equal(await unchanged.text(), "");
+  const unauthorized = await GET(new Request("http://palui/api/players", { headers: { "if-none-match": etag } }));
+  assert.equal(unauthorized.status, 401);
+  await writeFile(join(serverDirectory, "players.json"), JSON.stringify([
+    { userId: "steam_1", displayName: "Changed", banned: false },
+  ]));
+  const changed = await GET(new Request("http://palui/api/players", { headers: { ...headers, "if-none-match": etag } }));
+  assert.equal(changed.status, 200);
+  assert.notEqual(changed.headers.get("etag"), etag);
+  assert.equal((await changed.json()).registeredPlayers[0].banned, false);
+});
+
 test.after(async () => {
   if (previousServerDirectory === undefined) delete process.env.PALUI_SERVER_DIR;
   else process.env.PALUI_SERVER_DIR = previousServerDirectory;

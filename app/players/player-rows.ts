@@ -23,6 +23,7 @@ export type RegisteredPlayer = {
 };
 
 export type PlayerRow = Player & {
+  gameName: string;
   rowKey: string;
   role: string;
   online: boolean;
@@ -31,6 +32,16 @@ export type PlayerRow = Player & {
 
 export function playerRowKey(player: Pick<Player, "playerId" | "userId">) {
   return JSON.stringify(player.userId ? ["user", player.userId] : ["player", player.playerId]);
+}
+
+export function reconcilePlayerItems<T extends object>(current: T[], next: T[], key: (item: T) => string): T[] {
+  const byKey = new Map(current.map((item) => [key(item), item]));
+  const reconciled = next.map((item) => {
+    const previous = byKey.get(key(item));
+    return previous && Object.keys(item).length === Object.keys(previous).length
+      && (Object.keys(item) as (keyof T)[]).every((field) => item[field] === previous[field]) ? previous : item;
+  });
+  return current.length === reconciled.length && current.every((item, index) => item === reconciled[index]) ? current : reconciled;
 }
 
 export function buildPlayerRows(players: Player[], registeredPlayers: RegisteredPlayer[], whitelist: string[], search: string): PlayerRow[] {
@@ -47,7 +58,9 @@ export function buildPlayerRows(players: Player[], registeredPlayers: Registered
     const userId = onlinePlayer?.userId ?? registeredPlayers.find((player) => JSON.stringify(["user", player.userId]) === rowKey)?.userId ??
       whitelist.find((candidate) => JSON.stringify(["user", candidate]) === rowKey) ?? "";
     const registeredPlayer = registeredByUserId.get(userId);
-    const name = onlinePlayer?.name?.trim() || registeredPlayer?.displayName?.trim() || userId || onlinePlayer?.playerId || "Unknown player";
+    const gameName = onlinePlayer?.name?.trim() || "";
+    const registeredName = registeredPlayer?.displayName?.trim() || "";
+    const name = (registeredName !== userId ? registeredName : "") || gameName || registeredName || userId || onlinePlayer?.playerId || "Unknown player";
     return {
       ...(onlinePlayer ?? {
         name,
@@ -63,12 +76,13 @@ export function buildPlayerRows(players: Player[], registeredPlayers: Registered
       }),
       rowKey,
       name,
+      gameName,
       level: onlinePlayer?.level || registeredPlayer?.level || 0,
       lastLogin: onlinePlayer?.lastLogin ?? registeredPlayer?.lastLogin ?? null,
-      banned: onlinePlayer?.banned === true || registeredPlayer?.banned === true,
+      banned: registeredPlayer?.banned === true,
       role: registeredPlayer?.role ?? "--",
       online: onlinePlayer !== undefined,
-      whitelisted: whitelist.includes(userId) || registeredPlayer?.white === true,
+      whitelisted: whitelist.includes(userId),
     };
-  }).filter((player) => `${player.name} ${player.accountName} ${player.playerId} ${player.userId}`.toLowerCase().includes(search.toLowerCase()));
+  }).filter((player) => `${player.name} ${player.gameName} ${player.accountName} ${player.playerId} ${player.userId}`.toLowerCase().includes(search.toLowerCase()));
 }

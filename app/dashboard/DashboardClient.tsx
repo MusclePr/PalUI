@@ -254,9 +254,9 @@ export default function DashboardClient({ initialDashboardCache, initialServerSt
     running: { label: "起動完了", icon: Check, className: "success" },
     sleeping: { label: "休眠中", icon: Moon, className: "sleeping" },
     paused: { label: "一時停止", icon: Pause, className: "sleeping" },
-    updating: { label: "更新中", icon: RefreshCw, className: "warning" },
+    updating: { label: "更新中", icon: RefreshCw, className: "updating" },
     stopped: { label: "停止済み", icon: CircleStop, className: "danger" },
-    starting: { label: "起動中", icon: RefreshCw, className: "warning" },
+    starting: { label: "起動中", icon: RefreshCw, className: "starting" },
     stopping: { label: "停止処理中", icon: RefreshCw, className: "warning" },
     not_created: { label: "未作成", icon: CircleStop, className: "danger" },
     unknown: { label: "状態不明", icon: AlertTriangle, className: "warning" },
@@ -534,7 +534,7 @@ export default function DashboardClient({ initialDashboardCache, initialServerSt
               <div className={`status-icon ${stateMeta.className}`}><StateIcon size={25} /></div>
               <div>
                 <p className="eyebrow">PAL CONTAINER</p>
-                <div className="status-title"><h2>{stateMeta.label}</h2><span className={`status-badge ${stateMeta.className}`}><StateIcon size={13} /> {stateMeta.label}</span></div>
+                <div className={`status-title ${stateMeta.className}`}><h2>{stateMeta.label}</h2><span className={`status-badge ${stateMeta.className}`}><StateIcon size={13} /> {stateMeta.label}</span></div>
                 <p className="muted">{container?.name ?? "Compose service: pal"} · {container?.image ?? "イメージ未取得"}</p>
                 <div className="server-progress-slot">
                   {serverStatus && !(serverStatus.progress === 100 && progressComplete) && <div className="server-progress">

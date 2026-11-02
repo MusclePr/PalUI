@@ -97,6 +97,16 @@ export async function isPalworldPaused() {
   }
 }
 
+export async function isPalworldAutoPauseForceDisabled() {
+  try {
+    await access(join(composeDirectory, "palworld", ".autopause-disabled"));
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 export function composeCommand(args: readonly string[]) {
   return {
     command: "docker",

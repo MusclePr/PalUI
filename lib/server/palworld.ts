@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { parse as parseDotenv } from "dotenv";
 import * as tar from "tar";
-import { isPalworldPaused, PalworldPausedError, readComposeServiceSnapshot, resumePalworldIfPaused, runCompose, runPalworldBackupCommand, runPalworldCommand, runPalworldRconCommand, withComposeOperation } from "./compose";
+import { isPalworldAutoPauseForceDisabled, isPalworldPaused, PalworldPausedError, readComposeServiceSnapshot, resumePalworldIfPaused, runCompose, runPalworldBackupCommand, runPalworldCommand, runPalworldRconCommand, withComposeOperation } from "./compose";
 import { PlayersCacheFormatError, readPlayersCache, withPlayersLock, writePlayersCache } from "./players-cache";
 
 const execFileAsync = promisify(execFile);
@@ -1010,8 +1010,20 @@ export async function readPalworldOverview(allowRestCommands = true) {
 }
 
 export async function setAutoPause(enabled: boolean) {
+  const settings = await readSettings();
+  const autoPauseSetting = settings.categories.find((category) => category.category === "system")?.values.find((setting) => setting.key === "AUTO_PAUSE_ENABLED");
+  const configuredEnabled = autoPauseSetting?.value.toLowerCase() === "true";
+  if (enabled && !configuredEnabled) throw new Error("設定でAUTO PAUSE機能が無効になっています");
+  if (!configuredEnabled) return { enabled: false };
+
   // AUTO PAUSE の切替は許可した2コマンドだけを実行し、任意のサブコマンドを受け付けない。
   const command = enabled ? "continue" : "stop";
   await runPalworldCommand(["autopause", command]);
-  return { enabled };
+  const expectedForceDisabled = !enabled;
+  const deadline = Date.now() + 5_000;
+  do {
+    if ((await isPalworldAutoPauseForceDisabled()) === expectedForceDisabled) return { enabled };
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  } while (Date.now() < deadline);
+  throw new Error("AUTO PAUSE機能の状態を確認できませんでした");
 }

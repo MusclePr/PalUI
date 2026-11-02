@@ -7,7 +7,27 @@ import test from "node:test";
 const serverDirectory = await mkdtemp(join(tmpdir(), "palui-paused-server-"));
 const previousServerDirectory = process.env.PALUI_SERVER_DIR;
 process.env.PALUI_SERVER_DIR = serverDirectory;
-const { isPalworldPaused, PalworldPausedError, runPalworldCommand, runPalworldRconCommand } = await import("../../lib/server/compose.ts");
+const { isPalworldAutoPauseForceDisabled, isPalworldPaused, PalworldPausedError, runPalworldCommand, runPalworldRconCommand } = await import("../../lib/server/compose.ts");
+
+test("force-disabled state follows the marker without running a container command", async () => {
+  const palworldDirectory = join(serverDirectory, "palworld");
+  const disabledFile = join(palworldDirectory, ".autopause-disabled");
+  await mkdir(palworldDirectory, { recursive: true });
+
+  assert.equal(await isPalworldAutoPauseForceDisabled(), false);
+  await writeFile(disabledFile, "");
+  assert.equal(await isPalworldAutoPauseForceDisabled(), true);
+  await writeFile(join(palworldDirectory, ".paused"), "");
+  assert.equal(await isPalworldAutoPauseForceDisabled(), true);
+  await rm(join(palworldDirectory, ".paused"));
+  await rm(disabledFile);
+  assert.equal(await isPalworldAutoPauseForceDisabled(), false);
+
+  await rm(palworldDirectory, { recursive: true });
+  await writeFile(palworldDirectory, "");
+  await assert.rejects(isPalworldAutoPauseForceDisabled(), { code: "ENOTDIR" });
+  await rm(palworldDirectory);
+});
 
 test("REST stays blocked while paused and whitelist RCON resumes Pal first", async () => {
   const pausedDirectory = join(serverDirectory, "palworld");

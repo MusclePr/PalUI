@@ -31,7 +31,7 @@ type DashboardOverview = {
   paused: boolean;
   info: PalworldInfo | null;
   metrics: PalworldMetrics | null;
-  errors: { info: string | null; metrics: string | null };
+  errors: { info: string | null; metrics: string | null; autoPause: string | null };
   autoPauseEnabled: boolean | null;
   serverStatus: PalworldServerStatus | null;
   lastRefreshAt?: string | null;
@@ -232,6 +232,8 @@ export default function DashboardClient({ initialDashboardCache, initialServerSt
   const [confirmAction, setConfirmAction] = useState<"stop" | "restart" | null>(null);
   const [snapshotLoaded, setSnapshotLoaded] = useState(false);
   const dashboardSnapshotRef = useRef<DashboardSnapshot | null>(null);
+  const autoPauseRevisionRef = useRef(0);
+  const autoPauseBusyRef = useRef(false);
 
   const serverState: ServerState = serverStatus?.status ?? (
     pendingAction === "stop"
@@ -382,6 +384,7 @@ export default function DashboardClient({ initialDashboardCache, initialServerSt
     async function refreshOverview() {
       if (inFlight) return;
       inFlight = true;
+      const autoPauseRevision = autoPauseRevisionRef.current;
       setRefreshing(true);
       try {
         const response = await fetch(`${basePath}/api/server/overview`, { cache: "no-store", signal: controller.signal });
@@ -422,10 +425,12 @@ export default function DashboardClient({ initialDashboardCache, initialServerSt
         else if (result.container.cpuPercent !== null || result.container.memoryUsageBytes !== null) setLastStatsAt(observedAt);
         if (result.lastMetricsAt) setLastMetricsAt(result.lastMetricsAt);
         else if (result.metrics) setLastMetricsAt(observedAt);
-        if (typeof result.autoPauseEnabled === "boolean") setAutoPauseEnabled(result.autoPauseEnabled);
+        if (typeof result.autoPauseEnabled === "boolean" && autoPauseRevision === autoPauseRevisionRef.current && !autoPauseBusyRef.current) {
+          setAutoPauseEnabled(result.autoPauseEnabled);
+        }
         if (!result.lastRefreshAt) setLastRefreshAt(observedAt);
 
-        const errors = [result.container.statsError, result.errors.info, result.errors.metrics].filter(Boolean);
+        const errors = [result.container.statsError, result.errors.info, result.errors.metrics, result.errors.autoPause].filter(Boolean);
         setNoticeWarning(errors.length > 0);
         setNotice(errors.length > 0 ? errors.join(" / ") : result.paused ? "PalサーバーはAUTO PAUSE中です" : result.container.state === "running" ? "Palサーバーの状態は最新です" : `Palコンテナ: ${stateMetaLabel(result.container.state)}`);
       } catch (error) {
@@ -483,6 +488,8 @@ export default function DashboardClient({ initialDashboardCache, initialServerSt
   async function toggleAutoPause() {
     if (autoPauseEnabled === null || autoPauseBusy) return;
     const nextValue = !autoPauseEnabled;
+    const autoPauseRevision = ++autoPauseRevisionRef.current;
+    autoPauseBusyRef.current = true;
     setAutoPauseBusy(true);
     try {
       const response = await fetch(`${basePath}/api/server/overview`, {
@@ -492,13 +499,15 @@ export default function DashboardClient({ initialDashboardCache, initialServerSt
       });
       const result = await response.json().catch(() => null) as { enabled?: unknown; error?: string } | null;
       if (!response.ok || typeof result?.enabled !== "boolean") throw new Error(result?.error ?? "AUTO PAUSE機能を変更できませんでした");
-      setAutoPauseEnabled(result.enabled);
+      if (autoPauseRevision === autoPauseRevisionRef.current) setAutoPauseEnabled(result.enabled);
       setNotice(`AUTO PAUSE機能を${result.enabled ? "オン" : "オフ"}にしました`);
       setNoticeWarning(false);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "AUTO PAUSE機能を変更できませんでした");
       setNoticeWarning(true);
     } finally {
+      autoPauseBusyRef.current = false;
+      autoPauseRevisionRef.current += 1;
       setAutoPauseBusy(false);
       setRefreshRequest((current) => current + 1);
     }
@@ -557,7 +566,7 @@ export default function DashboardClient({ initialDashboardCache, initialServerSt
                 <div><strong>AUTO PAUSE機能</strong><small>{autoPauseEnabled === null ? "設定状態を取得できません" : "プレイヤー0人時の自動休眠"}</small></div>
                 <button type="button" className={`switch ${autoPauseEnabled ? "is-on" : ""}`} role="switch" aria-checked={autoPauseEnabled === true} aria-label="AUTO PAUSE機能" onClick={() => void toggleAutoPause()} disabled={autoPauseEnabled === null || autoPauseBusy || (serverState !== "running" && serverState !== "sleeping" && serverState !== "paused")}><span /></button>
               </div>
-              <div className="action-footnote"><AlertTriangle size={14} /> 起動・停止・再起動はpal / map全体に適用されます。</div>
+              <div className="action-footnote"><AlertTriangle size={14} /> AUTO PAUSEの切替は一時的です。再起動後は設定値に戻ります。起動・停止・再起動はpal / map全体に適用されます。</div>
             </div>
             <div className="panel info-panel">
               <div className="panel-heading"><div><p className="eyebrow">SERVER INFO</p><h3>サーバー情報</h3></div><Server size={18} className="muted-icon" /></div>

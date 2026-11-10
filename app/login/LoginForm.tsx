@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowRight, KeyRound, ShieldCheck, TerminalSquare } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 
 type LoginFormProps = {
@@ -9,6 +10,7 @@ type LoginFormProps = {
 };
 
 export function LoginForm({ initialConfigured, initialAuthNotice }: LoginFormProps) {
+  const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [configured, setConfigured] = useState(initialConfigured);
   const [error, setError] = useState(initialAuthNotice === "already-configured" ? "パスワードは設定済みです。ログインしてください。" : initialAuthNotice === "invalid-credentials" ? "アカウントまたはパスワードが正しくありません" : "");
@@ -45,8 +47,23 @@ export function LoginForm({ initialConfigured, initialAuthNotice }: LoginFormPro
     }
   }
 
-  function handleLoginSubmit() {
+  async function handleLoginSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     setBusy(true);
+    setError("");
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch(`${basePath}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: String(form.get("username")), password: String(form.get("password")) }) });
+      const data = await response.json() as { error?: string };
+      if (response.ok) {
+        router.push("/dashboard");
+        return;
+      }
+      setError(data.error ?? "認証に失敗しました");
+    } catch {
+      setError("認証に失敗しました");
+    }
+    setBusy(false);
   }
 
   return (

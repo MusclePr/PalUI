@@ -5,7 +5,7 @@ set -eu
 PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
 
-node /usr/local/bin/bootstrap-server.mjs --template /template --destination /server
+/usr/local/bin/bootstrap-server.sh --template /template --destination /server
 
 if [ "$PUID" != "0" ]; then
   if getent group palui >/dev/null 2>&1; then

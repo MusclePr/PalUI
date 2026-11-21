@@ -8,9 +8,9 @@ set -euo pipefail
 
 cd "$(dirname "$(readlink -f "$0")")"
 
-PALWORLDSETTINGS_INI="./palworld/Pal/Saved/Config/WindowsServer/PalWorldSettings.ini"
+PALWORLDSETTINGS_INI="./server/palworld/Pal/Saved/Config/WindowsServer/PalWorldSettings.ini"
 PALWORLDSETTINGS_TEMPLATE_URL="https://raw.githubusercontent.com/thijsvanloef/palworld-server-docker/refs/heads/main/scripts/files/PalWorldSettings.ini.template"
-PALWORLDSETTINGS_ENV="./PalWorldSettings.env"
+PALWORLDSETTINGS_ENV="./.PalWorldSettings.env"
 declare -A dict={}
 
 # PalWorldSettings.ini のテンプレートを読み込み、dict 配列に格納します。

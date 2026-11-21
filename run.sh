@@ -33,7 +33,7 @@ if [[ ! -d node_modules ]]; then
   npm ci
 fi
 
-node "$ROOT_DIR/scripts/bootstrap-server.mjs" \
+bash "$ROOT_DIR/scripts/bootstrap-server.sh" \
   --template "$ROOT_DIR/palui/template" \
   --destination "$ROOT_DIR/palui/server" \
   --host-server-dir "$ROOT_DIR/palui/server"

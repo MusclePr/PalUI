@@ -2,7 +2,7 @@
 
 set -e
 
-cd "$(dirname "$0")"
+cd "/server"
 
 source .env
 

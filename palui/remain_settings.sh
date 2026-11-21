@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# PalServerSettings.env に残っている未定義のキーを列挙するスクリプト
+# .PalWorldSettings.env に残っている未定義のキーを列挙するスクリプト
 #
 
 set -euo pipefail
@@ -29,5 +29,7 @@ function remove_keys() {
     done < "$file"
 }
 
-load_keys defaults/*.env
-remove_keys PalServerSettings.env
+[ ! -f ./.PalWorldSettings.env ] && ./decompile-pal.sh >/dev/null
+
+load_keys template/defaults/*.env
+remove_keys ./.PalWorldSettings.env

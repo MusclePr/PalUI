@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-cd "$(dirname "$(readlink -f "$0")")"
+cd /server
 
 [ -f .env ] && . .env
 

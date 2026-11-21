@@ -4,4 +4,3 @@ if [ ! -d /server ]; then
   exit 1
 fi
 docker compose --project-directory /server exec -itu steam pal "$@"
-

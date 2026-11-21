@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const bootstrapScript = path.join(repositoryRoot, "scripts/bootstrap-server.mjs");
+const bootstrapScript = path.join(repositoryRoot, "scripts/bootstrap-server.sh");
 
 function renderCompose(t, environment = {}, useProjectTemplate = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "palui-bootstrap-"));
@@ -58,7 +58,7 @@ function renderCompose(t, environment = {}, useProjectTemplate = false) {
     delete childEnvironment.PROJECT;
   }
 
-  const result = spawnSync(process.execPath, [
+  const result = spawnSync("bash", [
     bootstrapScript,
     "--template", templateDirectory,
     "--destination", destinationDirectory,
@@ -133,7 +133,7 @@ test("bootstrap rejects invalid Compose project names", (t) => {
   fs.mkdirSync(hostServerDirectory);
   fs.writeFileSync(path.join(templateDirectory, "template.compose.yml"), "name: __PROJECT_PAL__\n__HOST_SERVER_DIR__\n");
 
-  const result = spawnSync(process.execPath, [
+  const result = spawnSync("bash", [
     bootstrapScript,
     "--template", templateDirectory,
     "--destination", destinationDirectory,
@@ -150,4 +150,106 @@ test("bootstrap rejects invalid Compose project names", (t) => {
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Invalid Compose project name/);
+});
+
+test("bootstrap copies only env files and updates them by modification time", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "palui-bootstrap-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const template = path.join(root, "template");
+  const destination = path.join(root, "server");
+  fs.mkdirSync(path.join(template, "defaults"), { recursive: true });
+  fs.mkdirSync(path.join(destination, "defaults"), { recursive: true });
+  fs.writeFileSync(path.join(template, "template.compose.yml"), "name: __PROJECT_PAL__\nsource: __HOST_SERVER_DIR__\n");
+  fs.mkdirSync(path.join(template, "defaults", "nested"));
+  fs.writeFileSync(path.join(template, "defaults", "existing.env"), "template");
+  fs.writeFileSync(path.join(destination, "defaults", "existing.env"), "user");
+  fs.utimesSync(path.join(template, "defaults", "existing.env"), 946684800, 946684800);
+  fs.utimesSync(path.join(destination, "defaults", "existing.env"), 978307200, 978307200);
+  fs.writeFileSync(path.join(template, "defaults", "new.env"), "new", { mode: 0o751 });
+  fs.chmodSync(path.join(template, "defaults", "new.env"), 0o751);
+  fs.utimesSync(path.join(template, "defaults", "new.env"), 946684800, 946684800);
+  fs.writeFileSync(path.join(template, "override.env"), "override");
+  fs.writeFileSync(path.join(template, "ignore.sh"), "ignored");
+  fs.writeFileSync(path.join(template, "defaults", "nested", "ignore.env"), "ignored");
+  fs.writeFileSync(path.join(destination, "template.compose.yml"), "stale");
+  const run = () => spawnSync("bash", [
+    bootstrapScript, "--template", template, "--destination", destination, "--host-server-dir", root,
+  ], { encoding: "utf8", env: { ...process.env, COMPOSE_PROJECT_NAME: "test_pal" } });
+
+  assert.equal(run().status, 0);
+  assert.equal(fs.readFileSync(path.join(destination, "defaults", "existing.env"), "utf8"), "user");
+  assert.equal(fs.readFileSync(path.join(destination, "defaults", "new.env"), "utf8"), "new");
+  assert.equal(fs.statSync(path.join(destination, "defaults", "new.env")).mode & 0o777, 0o751);
+  assert.equal(fs.statSync(path.join(destination, "defaults", "new.env")).mtimeMs, 946684800000);
+  assert.equal(fs.readFileSync(path.join(destination, "override.env"), "utf8"), "override");
+  assert.equal(fs.existsSync(path.join(destination, "ignore.sh")), false);
+  assert.equal(fs.existsSync(path.join(destination, "defaults", "nested")), false);
+  assert.equal(fs.readFileSync(path.join(destination, "template.compose.yml"), "utf8"), "stale");
+  fs.utimesSync(path.join(template, "defaults", "existing.env"), 1009843200, 1009843200);
+  fs.writeFileSync(path.join(destination, "compose.yml"), "local edits");
+  assert.equal(run().status, 0);
+  assert.equal(fs.readFileSync(path.join(destination, "defaults", "existing.env"), "utf8"), "template");
+  assert.match(fs.readFileSync(path.join(destination, "compose.yml"), "utf8"), /^# Generated/);
+});
+
+test("bootstrap safely renders special host path characters", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "palui-bootstrap-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const template = path.join(root, "template");
+  const destination = path.join(root, "server");
+  const host = path.join(root, 'host $HOME "quote" \\ backslash & pipe |\n');
+  fs.mkdirSync(template);
+  fs.mkdirSync(host);
+  fs.writeFileSync(path.join(template, "template.compose.yml"), "name: __PROJECT_PAL__\nsource: __HOST_SERVER_DIR__\n");
+  const result = spawnSync("bash", [
+    bootstrapScript, "--template", template, "--destination", destination, "--host-server-dir", host,
+  ], { encoding: "utf8", env: { ...process.env, COMPOSE_PROJECT_NAME: "test_pal" } });
+
+  assert.equal(result.status, 0, result.stderr);
+  const compose = fs.readFileSync(path.join(destination, "compose.yml"), "utf8");
+  const source = compose.match(/^source: (.+)$/m);
+  assert.ok(source);
+  assert.equal(JSON.parse(source[1]), `${host.replaceAll("$", () => "$$")}/palworld`);
+});
+
+test("bootstrap leaves the existing compose intact when a placeholder is missing", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "palui-bootstrap-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const template = path.join(root, "template");
+  const destination = path.join(root, "server");
+  fs.mkdirSync(template);
+  fs.mkdirSync(destination);
+  fs.writeFileSync(path.join(template, "template.compose.yml"), "name: __PROJECT_PAL__\n");
+  fs.writeFileSync(path.join(destination, "compose.yml"), "original");
+  const result = spawnSync("bash", [
+    bootstrapScript, "--template", template, "--destination", destination, "--host-server-dir", root,
+  ], { encoding: "utf8", env: { ...process.env, COMPOSE_PROJECT_NAME: "test_pal" } });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /does not contain __HOST_SERVER_DIR__/);
+  assert.equal(fs.readFileSync(path.join(destination, "compose.yml"), "utf8"), "original");
+});
+
+test("bootstrap rejects invalid IDs and nonexistent host paths", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "palui-bootstrap-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const template = path.join(root, "template");
+  fs.mkdirSync(template);
+  fs.writeFileSync(path.join(template, "template.compose.yml"), "name: __PROJECT_PAL__\nsource: __HOST_SERVER_DIR__\n");
+  const args = [
+    bootstrapScript, "--template", template, "--destination", path.join(root, "server"),
+    "--host-server-dir", path.join(root, "missing"),
+  ];
+  const invalidId = spawnSync("bash", args, {
+    encoding: "utf8", env: { ...process.env, PUID: "", COMPOSE_PROJECT_NAME: "test_pal" },
+  });
+  assert.notEqual(invalidId.status, 0);
+  assert.match(invalidId.stderr, /PUID must be a non-negative integer/);
+
+  const missingHost = spawnSync("bash", args, {
+    encoding: "utf8",
+    env: { ...process.env, PUID: String(process.getuid()), PGID: String(process.getgid()), COMPOSE_PROJECT_NAME: "test_pal" },
+  });
+  assert.notEqual(missingHost.status, 0);
+  assert.match(missingHost.stderr, /Server initialization failed/);
 });

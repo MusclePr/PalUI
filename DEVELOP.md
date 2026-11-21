@@ -68,9 +68,9 @@
 
 ### 4.1 必須のホスト構成
 
-管理対象プロジェクトのテンプレートは `./palui/template/` に配置する。Docker 起動時はイメージ内の `/template/` から `/server/` へ不足ファイルだけをコピーし、`template.compose.yml` を基に `/server/compose.yml` を生成する。palui の Compose プロジェクトからは、ホストの `./palui/server/` を `/server` としてバインドマウントする。
+管理対象プロジェクトのテンプレートは `./palui/template/` に配置する。Docker 起動時はイメージ内の `/template/` と `/template/defaults/` の `*.env` を `/server/` と `/server/defaults/` にコピーし、`/template/template.compose.yml` を基に `/server/compose.yml` を生成する。palui の Compose プロジェクトからは、ホストの `./palui/server/` を `/server` としてバインドマウントする。
 
-ネイティブ開発では `./run.sh` が同じ初期化を行い、リポジトリの `./palui/server/` に不足ファイルを配置する。`npm run dev` を直接実行した場合は初期化されない。
+ネイティブ開発では `./run.sh` が同じ初期化を行い、リポジトリの `./palui/server/` に環境変数ファイルを配置する。初期化には Bash、GNU coreutils、`jq` が必要である。`npm run dev` を直接実行した場合は初期化されない。
 
 `palui/server/`は実行時データであり、Next.jsのstandalone出力には含めない。`next.config.ts`の出力トレース除外で明示し、Dockerでは引き続き`/server`へのバインドマウントを利用する。
 
@@ -92,12 +92,11 @@ host
     |- players.json ... 登録済みプレイヤー（userId、表示名、ロール、ホワイトリスト状態、BAN状態、初回ログイン日時、最終ログイン日時などを保存しておくためのファイル）
     |- .players-cache.json ... 最後の有効なオンライン一覧・変更時刻・監視エラー（PalUI内部用）
     |- .players-write.lock ... プレイヤー情報の更新中だけ存在する排他ファイル（PalUI内部用）
-    |- template.compose.yml ... Palworld 専用サーバーのComposeテンプレート
     |- compose.yml ... テンプレートから起動時に生成（起動ごとに上書き）
     `- override.env ... コンテナ向け環境変数（palui の管理対象）
 ```
 
-  テンプレートのコピーは既存ファイルを上書きしないため、既存設定やゲームデータは保持される一方、既存ファイルに対するテンプレート更新は自動適用されない。追加された新規ファイルは次回起動時に配置される。`compose.yml` は例外として `template.compose.yml` から毎回再生成されるため、直接編集してはならない。既存の `template.compose.yml` も自動更新されないため、更新時は必要に応じて手動で移行する。
+  環境変数ファイルはコピー元が新しい場合に上書きされる。コピー元が同じ更新日時か古い場合は既存ファイルを保持する。`compose.yml` はテンプレートから毎回再生成されるため、直接編集してはならない。
 
   Palworld 専用サーバーの Compose には `pal` と `map` サービスが含まれる。`map` は `MAP_PORT`（既定値 `8080`）で公開され、REST API は `http://pal:8213` へ直接接続する。`ADMIN_PASSWORD` は Live Map が REST API に接続するためのパスワードで、Palworld サーバー側の管理者パスワードと一致させる。
 
@@ -136,7 +135,7 @@ Compose コマンドを組み立てる際、利用者入力をシェル文字列
 
 #### DooD 注意点
 
-コンテナ内からの Docker 操作は `/var/run/docker.sock` を通じてホスト上で実行される。そのため、Palworld Compose の bind mount にはホストから見える絶対パスが必要となる。entrypoint は `/server` の mount 情報からこのパスを取得し、`template.compose.yml` の `__HOST_SERVER_DIR__` を置換して `compose.yml` を生成する。トップレベルの `name` には親 Compose の `COMPOSE_PROJECT_NAME` を埋め込み、親名に追従させる。単独起動では `PROJECT` に `_pal` を付け、未指定なら `dev_pal` を使う。ホストから生成済みComposeを直接操作する場合も同じプロジェクト名となる。テンプレート変更を既存環境へ適用するときは `palui/template_update.sh` を実行してから再起動する。このスクリプトはComposeテンプレートを更新し、ユーザー設定ファイルは既存どおり更新日時に基づいて扱う。ホスト側のパスは PalUI の環境変数としては公開しない。`/server` の mount またはテンプレートを利用できず Compose を生成できない場合、誤ったパスで起動しないよう PalUI の起動を中断する。
+コンテナ内からの Docker 操作は `/var/run/docker.sock` を通じてホスト上で実行される。そのため、Palworld Compose の bind mount にはホストから見える絶対パスが必要となる。entrypoint は `/server` の mount 情報からこのパスを取得し、`template.compose.yml` の `__HOST_SERVER_DIR__` を置換して `compose.yml` を生成する。トップレベルの `name` には親 Compose の `COMPOSE_PROJECT_NAME` を埋め込み、親名に追従させる。単独起動では `PROJECT` に `_pal` を付け、未指定なら `dev_pal` を使う。ホストから生成済みComposeを直接操作する場合も同じプロジェクト名となる。`palui/template_update.sh` は環境変数ファイルを更新日時に基づいてコピーする。Compose テンプレートの変更は再起動時に反映される。ホスト側のパスは PalUI の環境変数としては公開しない。`/server` の mount またはテンプレートを利用できず Compose を生成できない場合、誤ったパスで起動しないよう PalUI の起動を中断する。
 
 ## 5. 機能要件
 

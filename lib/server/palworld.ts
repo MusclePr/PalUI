@@ -347,7 +347,7 @@ async function execWhitelistScript(args: string[]) {
       throw new PlayerStoreError("AUTO PAUSEから復帰できないためRCONを実行できません", 503);
     }
   }
-  return execFileAsync("bash", ["./whitelist.sh", ...args], {
+  return execFileAsync("bash", ["whitelist.sh", ...args], {
     cwd: settingsRoot,
     env: { ...process.env, MODE: "json" },
     timeout: 60_000,

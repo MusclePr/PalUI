@@ -1,6 +1,7 @@
 /palui/server/
 node_modules/
-.next/
 out/
-.env
 node_modules
+.*
+!.dockerignore
+!.gitignore

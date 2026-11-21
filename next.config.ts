@@ -5,6 +5,9 @@ const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "/palui";
 const nextConfig: NextConfig = {
   basePath,
   output: "standalone",
+  experimental: {
+    agentUpgrade: "security",
+  },
   outputFileTracingExcludes: {
     "/*": ["./palui/server/**/*"],
   },
